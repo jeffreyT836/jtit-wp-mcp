@@ -1,0 +1,16 @@
+node_modules
+dist
+coverage
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+config/sites.json
+secrets/
+tests
+docs
+*.md
+.foreman
+.vscode
+npm-debug.log

@@ -1,0 +1,54 @@
+# wp-fleet-mcp — see docs/SPEC.md §2 for the container hardening this encodes.
+#
+# HTTP mode (long-running, for a client that speaks Streamable HTTP over localhost):
+#   docker compose --profile http up -d mcp-http
+#
+# Stdio mode is normally launched directly by the MCP client, not through compose,
+# since it needs an attached stdin. Equivalent plain `docker run`:
+#   docker run -i --rm \
+#     --env-file .env \
+#     -e MCP_TRANSPORT=stdio \
+#     -v "$PWD/config/sites.json:/app/config/sites.json:ro" \
+#     wp-fleet-mcp
+#
+# The `mcp-stdio` service below runs the same image in stdio mode for local testing
+# with `docker compose --profile stdio run --rm mcp-stdio`.
+
+services:
+  mcp-http:
+    build: .
+    image: wp-fleet-mcp
+    profiles: ["http"]
+    environment:
+      MCP_TRANSPORT: http
+    env_file: .env
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - ./config/sites.json:/app/config/sites.json:ro
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
+  mcp-stdio:
+    build: .
+    image: wp-fleet-mcp
+    profiles: ["stdio"]
+    environment:
+      MCP_TRANSPORT: stdio
+    env_file: .env
+    volumes:
+      - ./config/sites.json:/app/config/sites.json:ro
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    stdin_open: true
