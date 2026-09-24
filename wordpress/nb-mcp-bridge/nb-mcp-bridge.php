@@ -5,7 +5,7 @@
  * Description:       Companion mu-plugin for wp-fleet-mcp. Exposes REST endpoints
  *                     (namespace nb-mcp/v1) for status, update management and role
  *                     information that WordPress core REST does not provide.
- * Version:           1.0.5
+ * Version:           1.0.6
  * Requires at least: 6.0
  * Requires PHP:      7.4
  * Author:            wp-fleet-mcp
@@ -18,7 +18,7 @@
 defined( 'ABSPATH' ) || exit;
 
 // Reported by GET /nb-mcp/v1/status; keep in sync with the "Version" header above.
-define( 'NB_MCP_BRIDGE_VERSION', '1.0.5' );
+define( 'NB_MCP_BRIDGE_VERSION', '1.0.6' );
 
 /**
  * Register all nb-mcp/v1 REST routes.
@@ -924,17 +924,33 @@ function nb_mcp_bridge_translation_key( $update ) {
  * @return bool
  */
 function nb_mcp_bridge_translation_is_installed( $update ) {
-	$installed = wp_get_installed_translations( 'core' === $update->type ? 'core' : $update->type . 's' );
-	$domain    = 'core' === $update->type ? 'default' : $update->slug;
-
-	if ( empty( $installed[ $domain ][ $update->language ]['PO-Revision-Date'] ) ) {
+	$offered_at = strtotime( $update->updated );
+	if ( false === $offered_at ) {
 		return false;
 	}
 
-	$installed_at = strtotime( $installed[ $domain ][ $update->language ]['PO-Revision-Date'] );
-	$offered_at   = strtotime( $update->updated );
+	if ( 'core' === $update->type ) {
+		// A core pack ships several files (default, admin, admin-network,
+		// continents-cities); its `updated` date follows the newest of them.
+		$installed = wp_get_installed_translations( 'core' );
+		$domains   = array_keys( $installed );
+	} else {
+		$installed = wp_get_installed_translations( $update->type . 's' );
+		$domains   = array( $update->slug );
+	}
 
-	return false !== $installed_at && false !== $offered_at && $installed_at >= $offered_at;
+	$newest = false;
+	foreach ( $domains as $domain ) {
+		if ( empty( $installed[ $domain ][ $update->language ]['PO-Revision-Date'] ) ) {
+			continue;
+		}
+		$revised = strtotime( $installed[ $domain ][ $update->language ]['PO-Revision-Date'] );
+		if ( false !== $revised && ( false === $newest || $revised > $newest ) ) {
+			$newest = $revised;
+		}
+	}
+
+	return false !== $newest && $newest >= $offered_at;
 }
 
 /**
@@ -1008,8 +1024,8 @@ function nb_mcp_bridge_update_translations() {
 		$errors[] = $result->get_error_message();
 	}
 	if ( $failed > 0 ) {
-		$messages = array_values( (array) $skin->get_error_messages() );
-		$errors   = array_merge( $errors, $messages );
+		$messages = array_filter( array_map( 'trim', (array) $skin->get_error_messages() ), 'strlen' );
+		$errors   = array_merge( $errors, array_values( $messages ) );
 		if ( empty( $errors ) ) {
 			$errors[] = __( 'Translation update did not complete.', 'nb-mcp-bridge' );
 		}

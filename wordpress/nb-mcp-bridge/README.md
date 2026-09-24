@@ -66,7 +66,8 @@ item's result over, so a failure after a success looks like a success. Instead
 the bridge runs the upgrade and then checks every offered pack against the
 files on disk: a pack counts as installed only when the local translation's
 `PO-Revision-Date` is at least the pack's `updated` date (the same comparison
-WordPress uses). This does not depend on api.wordpress.org being reachable.
+WordPress uses; for core packs the newest date across all core text domains —
+`default`, `admin`, `admin-network`, `continents-cities` — is used). This does not depend on api.wordpress.org being reachable.
 Afterwards the update caches are refreshed so later `GET /updates` calls are
 current.
 Response: `{success, count, failed, failed_items?, errors?, no_update?}`
