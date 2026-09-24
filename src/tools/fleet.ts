@@ -271,7 +271,7 @@ export function register(server: McpServer, ctx: ToolContext): void {
           const confirmed = confirm === true;
           const { selected: targets, skipped } = selectSites(ctx.registry, { sites, tags });
 
-          const results = await runFleet(
+          const rawResults = await runFleet(
             targets,
             async (site) => {
               const client = ctx.registry.client(site.id);
@@ -303,7 +303,23 @@ export function register(server: McpServer, ctx: ToolContext): void {
                   timeoutMs: ctx.env.WP_UPDATE_TIMEOUT_MS,
                 });
                 const bridgeResult = data.results?.[0];
-                if (bridgeResult && bridgeResult.success === false) {
+                if (!bridgeResult) {
+                  const message = 'bridge returned no result';
+                  ctx.audit.log({
+                    tool: 'fleet_update_plugin',
+                    site: site.id,
+                    args: { plugin, confirm: true },
+                    ok: false,
+                    error: message,
+                  });
+                  return {
+                    status: 'failed' as const,
+                    from: info.current_version,
+                    to: info.new_version,
+                    error: message,
+                  };
+                }
+                if (bridgeResult.success === false) {
                   const message = bridgeResult.error ?? `bridge reported failure updating ${file}`;
                   ctx.audit.log({
                     tool: 'fleet_update_plugin',
@@ -333,6 +349,13 @@ export function register(server: McpServer, ctx: ToolContext): void {
               }
             },
             ctx.env.FLEET_CONCURRENCY,
+          );
+
+          // A per-site "failed" outcome is returned as data, not a thrown error (so the
+          // preview/skip statuses stay alongside it) — surface it as ok:false here too, so
+          // the fleet-level `results` array doesn't misreport a failed update as ok:true.
+          const results = rawResults.map((r) =>
+            r.ok && r.data?.status === 'failed' ? { ...r, ok: false, error: r.data.error ?? 'update failed' } : r,
           );
 
           const summary = results.reduce(

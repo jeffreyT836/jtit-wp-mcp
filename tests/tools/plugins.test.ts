@@ -220,6 +220,37 @@ describe('tools/plugins', () => {
     expect(harness.auditEntries[0]).toMatchObject({ tool: 'activate_plugin', ok: true });
   });
 
+  it('activate_plugin maps the raw WP response to the same shape as list_plugins, dropping extra fields', async () => {
+    const site = makeSite({ id: 'acme' });
+    harness = await createHarness({
+      sites: [site],
+      fetch: createMockFetch(() =>
+        jsonResponse({
+          plugin: 'akismet/akismet',
+          status: 'active',
+          name: 'Akismet',
+          version: '5.4',
+          _links: { self: [{ href: 'https://acme.example.com/wp-json/wp/v2/plugins/akismet/akismet' }] },
+          textdomain: 'akismet',
+        }),
+      ),
+    });
+    const result = await harness.client.callTool({
+      name: 'activate_plugin',
+      arguments: { site: 'acme', plugin: 'akismet/akismet', confirm: true },
+    });
+    expect(JSON.parse(textOf(result))).toEqual({
+      plugin: 'akismet/akismet',
+      name: 'Akismet',
+      version: '5.4',
+      status: 'active',
+      author: undefined,
+      requires_wp: undefined,
+      requires_php: undefined,
+      network_only: undefined,
+    });
+  });
+
   it('deactivate_plugin previews (dry-run) then sends status: inactive when confirmed', async () => {
     const site = makeSite({ id: 'acme' });
     let sawBody: unknown;

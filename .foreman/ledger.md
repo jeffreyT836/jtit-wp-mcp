@@ -16,3 +16,4 @@ Baseline: git init, commit "chore: spec" (see below).
 - W2 all DONE; refactor commit; bridge b18091d; README da00798.
 - Verify #1 (blind, @da00798): FAIL — 1 CRITICAL (http/unavailable sites contacted), 4 HIGH (http host check, shared stateless server, update_core, get_plugins include), 3 MED, 3 LOW.
 - Fix wave dispatched: TS worker (src/tests/README/compose) ∥ PHP worker (wordpress/**).
+- Verify #2 @a92a3a9: PASS_WITH_NOTES (11/11 fixed; 2 MED new: update audit ok on failure, core autoupdate offers). Fix round 2 dispatched TS ∥ PHP.

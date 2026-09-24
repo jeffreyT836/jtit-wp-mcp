@@ -152,6 +152,42 @@ describe('tools/users', () => {
       const { tools } = await harness.client.listTools();
       expect(tools.find((t) => t.name === 'create_user')).toBeUndefined();
     });
+
+    it('maps the created user to {id, username, name, email, roles, registered_date}, dropping capabilities and other WP fields', async () => {
+      harness = await createHarness({
+        sites: [makeSite({ id: 'acme' })],
+        fetch: createMockFetch(() =>
+          jsonResponse({
+            id: 44,
+            username: 'newuser3',
+            name: 'New User',
+            email: 'n3@example.com',
+            roles: ['subscriber'],
+            registered_date: '2026-01-01T00:00:00Z',
+            capabilities: { read: true, level_0: true },
+            extra_capabilities: { subscriber: true },
+            _links: { self: [{ href: 'https://acme.example.com/wp-json/wp/v2/users/44' }] },
+          }),
+        ),
+      });
+
+      const result = await harness.client.callTool({
+        name: 'create_user',
+        arguments: { site: 'acme', username: 'newuser3', email: 'n3@example.com', confirm: true },
+      });
+      const data = JSON.parse(textOf(result));
+      expect(data.capabilities).toBeUndefined();
+      expect(data.extra_capabilities).toBeUndefined();
+      expect(data._links).toBeUndefined();
+      expect(data).toMatchObject({
+        id: 44,
+        username: 'newuser3',
+        name: 'New User',
+        email: 'n3@example.com',
+        roles: ['subscriber'],
+        registered_date: '2026-01-01T00:00:00Z',
+      });
+    });
   });
 
   describe('update_user_roles', () => {

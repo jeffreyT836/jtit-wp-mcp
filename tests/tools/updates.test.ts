@@ -119,7 +119,7 @@ describe('tools/updates', () => {
     expect(harness.auditEntries[0]).toMatchObject({ tool: 'update_plugins', ok: true });
   });
 
-  it('update_plugins with an explicit list previews an entry not currently listed as updatable', async () => {
+  it('update_plugins with an explicit list marks an entry with no pending update as no_update_available, not would-update', async () => {
     const site = makeSite({ id: 'acme' });
     harness = await createHarness({
       sites: [site],
@@ -131,12 +131,82 @@ describe('tools/updates', () => {
     });
     expect(JSON.parse(textOf(result))).toMatchObject({
       wouldDo: {
-        updates: [
-          { plugin: 'akismet/akismet', from: '5.3', to: '5.4' },
-          { plugin: 'hello-dolly/hello' },
-        ],
+        updates: [{ plugin: 'akismet/akismet', from: '5.3', to: '5.4' }],
+        no_update_available: [{ plugin: 'hello-dolly/hello', status: 'no_update_available' }],
       },
     });
+  });
+
+  it('update_plugins with only no-update entries posts nothing when confirmed', async () => {
+    const site = makeSite({ id: 'acme' });
+    let posted = false;
+    harness = await createHarness({
+      sites: [site],
+      fetch: createMockFetch((_url, init) => {
+        if (init?.method === 'POST') posted = true;
+        return jsonResponse(sampleUpdates);
+      }),
+    });
+    const result = await harness.client.callTool({
+      name: 'update_plugins',
+      arguments: { site: 'acme', plugins: ['hello-dolly/hello'], confirm: true },
+    });
+    expect(result.isError).toBeUndefined();
+    expect(posted).toBe(false);
+    expect(JSON.parse(textOf(result))).toMatchObject({ updated: false });
+  });
+
+  it('update_plugins audits ok:false (but not isError) on a partial per-item failure, and isError on a total failure', async () => {
+    const site = makeSite({ id: 'acme' });
+    harness = await createHarness({
+      sites: [site],
+      fetch: createMockFetch((_url, init) => {
+        if (init?.method === 'POST') {
+          return jsonResponse({
+            results: [
+              { plugin: 'akismet/akismet.php', success: true },
+              { plugin: 'jetpack/jetpack.php', success: false, error: 'checksum mismatch' },
+            ],
+          });
+        }
+        return jsonResponse(sampleUpdates);
+      }),
+    });
+
+    const result = await harness.client.callTool({
+      name: 'update_plugins',
+      arguments: { site: 'acme', all: true, confirm: true },
+    });
+    expect(result.isError).toBeUndefined();
+    expect(JSON.parse(textOf(result))).toMatchObject({
+      results: [
+        { plugin: 'akismet/akismet.php', success: true },
+        { plugin: 'jetpack/jetpack.php', success: false, error: 'checksum mismatch' },
+      ],
+    });
+    expect(harness.auditEntries).toHaveLength(1);
+    expect(harness.auditEntries[0]).toMatchObject({ tool: 'update_plugins', ok: false });
+    expect((harness.auditEntries[0]!.error as string)).toContain('1/2');
+  });
+
+  it('update_plugins sets isError when every item fails', async () => {
+    const site = makeSite({ id: 'acme' });
+    harness = await createHarness({
+      sites: [site],
+      fetch: createMockFetch((_url, init) => {
+        if (init?.method === 'POST') {
+          return jsonResponse({ results: [{ plugin: 'akismet/akismet.php', success: false, error: 'boom' }] });
+        }
+        return jsonResponse(sampleUpdates);
+      }),
+    });
+
+    const result = await harness.client.callTool({
+      name: 'update_plugins',
+      arguments: { site: 'acme', plugins: ['akismet/akismet'], confirm: true },
+    });
+    expect(result.isError).toBe(true);
+    expect(harness.auditEntries[0]).toMatchObject({ tool: 'update_plugins', ok: false, error: expect.stringContaining('boom') });
   });
 
   it('update_plugins requires plugins or all', async () => {
@@ -273,6 +343,40 @@ describe('tools/updates', () => {
     expect(posted).toBe(false);
   });
 
+  it('update_themes with an explicit list marks an entry with no pending update as no_update_available, not would-update', async () => {
+    const site = makeSite({ id: 'acme' });
+    harness = await createHarness({ sites: [site], fetch: createMockFetch(() => jsonResponse(sampleUpdates)) });
+    const result = await harness.client.callTool({
+      name: 'update_themes',
+      arguments: { site: 'acme', themes: ['twentytwentyfour', 'twentytwentythree'] },
+    });
+    expect(JSON.parse(textOf(result))).toMatchObject({
+      wouldDo: {
+        updates: [{ theme: 'twentytwentyfour', from: '1.0', to: '1.1' }],
+        no_update_available: [{ theme: 'twentytwentythree', status: 'no_update_available' }],
+      },
+    });
+  });
+
+  it('update_themes audits ok:false without isError on a partial per-item failure', async () => {
+    const site = makeSite({ id: 'acme' });
+    harness = await createHarness({
+      sites: [site],
+      fetch: createMockFetch((_url, init) => {
+        if (init?.method === 'POST') {
+          return jsonResponse({ results: [{ theme: 'twentytwentyfour', success: false, error: 'checksum mismatch' }] });
+        }
+        return jsonResponse(sampleUpdates);
+      }),
+    });
+    const result = await harness.client.callTool({
+      name: 'update_themes',
+      arguments: { site: 'acme', all: true, confirm: true },
+    });
+    expect(result.isError).toBe(true); // only item, so also the total-failure case
+    expect(harness.auditEntries[0]).toMatchObject({ tool: 'update_themes', ok: false, error: expect.stringContaining('checksum mismatch') });
+  });
+
   it('update_core previews the available update and posts allow_major when confirmed', async () => {
     const site = makeSite({ id: 'acme' });
     let sawBody: unknown;
@@ -301,22 +405,58 @@ describe('tools/updates', () => {
     expect(sawBody).toEqual({ allow_major: true });
   });
 
-  it('update_core reports up to date and makes no POST when there is no upgrade response', async () => {
+  it('update_core preview uses a fresh (refresh=1) check, not the cache', async () => {
+    const site = makeSite({ id: 'acme' });
+    let sawUrl = '';
+    harness = await createHarness({
+      sites: [site],
+      fetch: createMockFetch((url) => {
+        sawUrl = url;
+        return jsonResponse(sampleUpdates);
+      }),
+    });
+    await harness.client.callTool({ name: 'update_core', arguments: { site: 'acme' } });
+    expect(sawUrl).toContain('refresh=1');
+  });
+
+  it('update_core still POSTs and returns the bridge answer when confirmed, even though the last check showed no upgrade', async () => {
     const site = makeSite({ id: 'acme' });
     let posted = false;
     harness = await createHarness({
       sites: [site],
       fetch: createMockFetch((_url, init) => {
-        if (init?.method === 'POST') posted = true;
+        if (init?.method === 'POST') {
+          posted = true;
+          return jsonResponse({ success: true, from: '6.5', to: '6.5' });
+        }
         return jsonResponse({ core: [{ current: '6.5', version: '6.5', response: 'latest' }] });
       }),
     });
-    const result = await harness.client.callTool({
-      name: 'update_core',
-      arguments: { site: 'acme', confirm: true },
+
+    const dryRun = await harness.client.callTool({ name: 'update_core', arguments: { site: 'acme' } });
+    expect(JSON.parse(textOf(dryRun))).toEqual({
+      dryRun: true,
+      wouldDo: { action: 'update_core', site: 'acme', message: 'core is already up to date' },
     });
-    expect(JSON.parse(textOf(result))).toEqual({ updated: false, message: 'core is already up to date' });
-    expect(posted).toBe(false);
+
+    const result = await harness.client.callTool({ name: 'update_core', arguments: { site: 'acme', confirm: true } });
+    expect(result.isError).toBeUndefined();
+    expect(posted).toBe(true);
+    expect(JSON.parse(textOf(result))).toEqual({ success: true, from: '6.5', to: '6.5' });
+  });
+
+  it('update_core audits ok:false and sets isError when the bridge reports success:false', async () => {
+    const site = makeSite({ id: 'acme' });
+    harness = await createHarness({
+      sites: [site],
+      fetch: createMockFetch((_url, init) => {
+        if (init?.method === 'POST') return jsonResponse({ success: false, error: 'checksum mismatch' });
+        return jsonResponse(sampleUpdates);
+      }),
+    });
+    const result = await harness.client.callTool({ name: 'update_core', arguments: { site: 'acme', confirm: true } });
+    expect(result.isError).toBe(true);
+    expect(harness.auditEntries[0]).toMatchObject({ tool: 'update_core', ok: false, error: 'checksum mismatch' });
   });
 
   it('update_translations dry-runs then posts when confirmed', async () => {
@@ -341,6 +481,23 @@ describe('tools/updates', () => {
     });
     expect(confirmed.isError).toBeUndefined();
     expect(posted).toBe(true);
+  });
+
+  it('update_translations audits ok:false and sets isError when the bridge reports success:false', async () => {
+    const site = makeSite({ id: 'acme' });
+    harness = await createHarness({
+      sites: [site],
+      fetch: createMockFetch((_url, init) => {
+        if (init?.method === 'POST') return jsonResponse({ success: false, error: 'network unreachable' });
+        return jsonResponse(sampleUpdates);
+      }),
+    });
+    const result = await harness.client.callTool({
+      name: 'update_translations',
+      arguments: { site: 'acme', confirm: true },
+    });
+    expect(result.isError).toBe(true);
+    expect(harness.auditEntries[0]).toMatchObject({ tool: 'update_translations', ok: false, error: 'network unreachable' });
   });
 
   it('MCP_READ_ONLY hides every update write tool but keeps list_updates', async () => {

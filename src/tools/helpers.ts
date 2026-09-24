@@ -199,6 +199,43 @@ interface ToolAnnotations {
   [key: string]: unknown;
 }
 
+const WRITE_OUTCOME_TAG = Symbol('writeOutcome');
+
+/**
+ * Wraps an {@link WriteToolConfig.execute} return value with an explicit success/failure
+ * outcome, for write tools whose bridge call can report partial or total failure inside a
+ * 200 response (e.g. a per-item `success:false`, or a top-level `success:false`).
+ *
+ * `failed`/`total` drive both the audit entry and the tool result:
+ * - `failed > 0` -> the confirmed attempt is audited `ok:false` (with `errorSummary`, or a
+ *   generic "N/M item(s) failed" message, as the audit `error`), even though the bridge
+ *   returned 200;
+ * - `failed === total` (every item failed) -> the tool result also gets `isError: true`;
+ * - `0 < failed < total` (partial failure) -> `isError` is left unset — the per-item `data`
+ *   (e.g. `{updated, failed, results}`) is still returned to the caller.
+ *
+ * A plain (non-wrapped) return value from `execute` keeps working exactly as before: audited
+ * `ok:true`, no `isError`.
+ */
+export interface WriteOutcome<T> {
+  readonly [WRITE_OUTCOME_TAG]: true;
+  data: T;
+  failed: number;
+  total: number;
+  errorSummary?: string;
+}
+
+export function writeOutcome<T>(
+  data: T,
+  outcome: { failed: number; total: number; errorSummary?: string },
+): WriteOutcome<T> {
+  return { [WRITE_OUTCOME_TAG]: true, data, failed: outcome.failed, total: outcome.total, errorSummary: outcome.errorSummary };
+}
+
+function isWriteOutcome(value: unknown): value is WriteOutcome<unknown> {
+  return !!value && typeof value === 'object' && (value as Record<PropertyKey, unknown>)[WRITE_OUTCOME_TAG] === true;
+}
+
 export interface WriteToolConfig<Shape extends ZodRawShapeCompat> {
   name: string;
   title: string;
@@ -239,9 +276,22 @@ export function registerWriteTool<Shape extends ZodRawShapeCompat>(
         return jsonResult({ dryRun: true, wouldDo });
       }
       requireWritable(site);
-      const data = await config.execute(args, site, client);
+      const raw = await config.execute(args, site, client);
+      if (isWriteOutcome(raw)) {
+        const { data, failed, total, errorSummary } = raw;
+        ctx.audit.log({
+          tool: config.name,
+          site: siteId,
+          args,
+          ok: failed === 0,
+          ...(failed > 0 ? { error: errorSummary ?? `${failed}/${total} item(s) failed` } : {}),
+        });
+        const result = jsonResult(data);
+        if (failed > 0 && failed === total) result.isError = true;
+        return result;
+      }
       ctx.audit.log({ tool: config.name, site: siteId, args, ok: true });
-      return jsonResult(data);
+      return jsonResult(raw);
     } catch (err) {
       if (confirmed) {
         ctx.audit.log({

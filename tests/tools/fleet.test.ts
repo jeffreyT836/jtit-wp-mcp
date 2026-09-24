@@ -259,10 +259,31 @@ describe('tools/fleet', () => {
     const data = JSON.parse(textOf(result));
 
     expect(data.summary).toMatchObject({ updated: 0, failed: 1 });
-    const bySite = Object.fromEntries(data.results.map((r: { site: string; data?: { status: string; error?: string } }) => [r.site, r.data]));
-    expect(bySite.flaky2).toMatchObject({ status: 'failed', error: 'checksum mismatch' });
+    const entry = data.results.find((r: { site: string }) => r.site === 'flaky2');
+    expect(entry).toMatchObject({ ok: false, error: 'checksum mismatch', data: { status: 'failed', error: 'checksum mismatch' } });
     expect(harness.auditEntries).toHaveLength(1);
     expect(harness.auditEntries[0]).toMatchObject({ tool: 'fleet_update_plugin', site: 'flaky2', ok: false, error: 'checksum mismatch' });
+  });
+
+  it('fleet_update_plugin treats a missing/empty bridge results array as a failure, not an update', async () => {
+    const site = makeSite({ id: 'noresult' });
+    harness = await createHarness({
+      sites: [site],
+      fetch: createMockFetch((_url, init) => {
+        if (init?.method === 'POST') return jsonResponse({});
+        return jsonResponse({ plugins: [{ plugin: 'akismet/akismet.php', current_version: '5.3', new_version: '5.4' }] });
+      }),
+    });
+
+    const result = await harness.client.callTool({
+      name: 'fleet_update_plugin',
+      arguments: { plugin: 'akismet/akismet', confirm: true },
+    });
+    const data = JSON.parse(textOf(result));
+    expect(data.summary).toMatchObject({ updated: 0, failed: 1 });
+    const entry = data.results.find((r: { site: string }) => r.site === 'noresult');
+    expect(entry).toMatchObject({ ok: false, error: 'bridge returned no result', data: { status: 'failed', error: 'bridge returned no result' } });
+    expect(harness.auditEntries[0]).toMatchObject({ tool: 'fleet_update_plugin', site: 'noresult', ok: false, error: 'bridge returned no result' });
   });
 
   it('fleet_updates_report, fleet_find_plugin and fleet_user_audit surface an error for an unknown explicit site id', async () => {

@@ -14,6 +14,7 @@ import {
   requireWritable,
   runFleet,
   selectSites,
+  writeOutcome,
 } from '../../src/tools/helpers.js';
 import type { FetchLike } from '../../src/wp/client.js';
 import { WpError } from '../../src/wp/errors.js';
@@ -368,5 +369,58 @@ describe('registerWriteTool', () => {
     } finally {
       await harness.close();
     }
+  });
+
+  describe('writeOutcome (partial/total failure signaled by execute)', () => {
+    it('audits ok:true and sets no isError when failed is 0', async () => {
+      const site = makeSite({ id: 's1' });
+      const harness = await buildWriteToolHarness({
+        sites: [site],
+        execute: async () => writeOutcome({ results: ['a', 'b'] }, { failed: 0, total: 2 }),
+      });
+      try {
+        const result = await harness.client.callTool({ name: 'noop_write', arguments: { site: 's1', confirm: true } });
+        expect(result.isError).toBeUndefined();
+        expect(harness.auditEntries).toHaveLength(1);
+        expect(harness.auditEntries[0]).toMatchObject({ tool: 'noop_write', ok: true });
+      } finally {
+        await harness.close();
+      }
+    });
+
+    it('audits ok:false with the error summary but leaves isError unset on a partial failure', async () => {
+      const site = makeSite({ id: 's1' });
+      const harness = await buildWriteToolHarness({
+        sites: [site],
+        execute: async () =>
+          writeOutcome({ updated: 1, failed: 1 }, { failed: 1, total: 2, errorSummary: '1/2 item(s) failed: b: boom' }),
+      });
+      try {
+        const result = await harness.client.callTool({ name: 'noop_write', arguments: { site: 's1', confirm: true } });
+        const text = (result.content as Array<{ type: string; text: string }>)[0]!.text;
+        expect(result.isError).toBeUndefined();
+        expect(JSON.parse(text)).toEqual({ updated: 1, failed: 1 });
+        expect(harness.auditEntries).toHaveLength(1);
+        expect(harness.auditEntries[0]).toMatchObject({ tool: 'noop_write', ok: false, error: '1/2 item(s) failed: b: boom' });
+      } finally {
+        await harness.close();
+      }
+    });
+
+    it('sets isError and audits ok:false when every item fails (falls back to a generic error when no summary given)', async () => {
+      const site = makeSite({ id: 's1' });
+      const harness = await buildWriteToolHarness({
+        sites: [site],
+        execute: async () => writeOutcome({ failed: 2 }, { failed: 2, total: 2 }),
+      });
+      try {
+        const result = await harness.client.callTool({ name: 'noop_write', arguments: { site: 's1', confirm: true } });
+        expect(result.isError).toBe(true);
+        expect(harness.auditEntries).toHaveLength(1);
+        expect(harness.auditEntries[0]).toMatchObject({ tool: 'noop_write', ok: false, error: '2/2 item(s) failed' });
+      } finally {
+        await harness.close();
+      }
+    });
   });
 });

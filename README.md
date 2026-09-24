@@ -78,10 +78,14 @@ geregistreerd worden. Test met `list_sites` en `site_check` per site, en zet pas
 claude mcp add wp-fleet -s user -- docker run -i --rm \
   --env-file /absoluut/pad/naar/.env \
   -v /absoluut/pad/naar/config/sites.json:/app/config/sites.json:ro \
+  -v wp-fleet-logs:/app/logs \
   wp-fleet-mcp
 ```
 
-Gebruik altijd **absolute paden** voor `--env-file` en de volume-mount.
+Gebruik altijd **absolute paden** voor `--env-file` en de sites.json-mount. De
+`-v wp-fleet-logs:/app/logs` is alleen nodig als je `AUDIT_LOG_FILE` gebruikt (zie §4.2) — de
+container draait met een read-only root filesystem, dus zonder deze (of een andere) volume op
+`/app/logs` kan het audit-bestand niet weggeschreven worden.
 
 ### 3.2 Claude Desktop
 
@@ -177,7 +181,7 @@ server (exit 1).
 | `WP_TIMEOUT_MS` | `30000` | Timeout voor gewone requests |
 | `WP_UPDATE_TIMEOUT_MS` | `300000` | Timeout voor update-operaties |
 | `FLEET_CONCURRENCY` | `4` | Max. gelijktijdige sites in fleet-tools |
-| `AUDIT_LOG_FILE` | — | Optioneel pad naar JSONL audit-bestand |
+| `AUDIT_LOG_FILE` | — | Optioneel pad naar JSONL audit-bestand — moet in Docker naar een writable volume wijzen (zie `docker-compose.yml`'s `wp-fleet-logs` volume op `/app/logs`, of `-v wp-fleet-logs:/app/logs` bij een losse `docker run`), anders faalt het schrijven op de read-only rootfs |
 
 ### 4.3 Secrets
 

@@ -147,11 +147,13 @@ export function register(server: McpServer, ctx: ToolContext): void {
     },
     annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: true },
     wouldDo: (args) => ({ action: 'activate_plugin', site: args.site, plugin: validatePluginId(args.plugin).route }),
-    execute: async (args, _site, client) =>
-      client.request(pluginRestPath(validatePluginId(args.plugin).route), {
+    execute: async (args, _site, client) => {
+      const updated = await client.request<WpPlugin>(pluginRestPath(validatePluginId(args.plugin).route), {
         method: 'POST',
         body: { status: 'active' },
-      }),
+      });
+      return mapPlugin(updated);
+    },
   });
 
   registerWriteTool(server, ctx, {
@@ -166,11 +168,13 @@ export function register(server: McpServer, ctx: ToolContext): void {
     },
     annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: true },
     wouldDo: (args) => ({ action: 'deactivate_plugin', site: args.site, plugin: validatePluginId(args.plugin).route }),
-    execute: async (args, _site, client) =>
-      client.request(pluginRestPath(validatePluginId(args.plugin).route), {
+    execute: async (args, _site, client) => {
+      const updated = await client.request<WpPlugin>(pluginRestPath(validatePluginId(args.plugin).route), {
         method: 'POST',
         body: { status: 'inactive' },
-      }),
+      });
+      return mapPlugin(updated);
+    },
   });
 
   registerWriteTool(server, ctx, {

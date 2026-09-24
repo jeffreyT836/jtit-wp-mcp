@@ -215,13 +215,12 @@ export function register(server: McpServer, ctx: ToolContext): void {
       };
       if (args.first_name) body.first_name = args.first_name;
       if (args.last_name) body.last_name = args.last_name;
-      const created = await client.request<Record<string, unknown>>('/wp/v2/users', {
+      const created = await client.request<WpUser>('/wp/v2/users', {
         method: 'POST',
         body,
       });
-      const { password: _pw, ...safe } = created ?? {};
       return {
-        ...safe,
+        ...mapUser(created),
         note: args.password
           ? 'password was set as provided; it is not echoed back'
           : 'a random password was generated and is not returned; send the user a password reset link',
