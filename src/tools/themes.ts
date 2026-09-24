@@ -68,7 +68,11 @@ function mapTheme(theme: WpTheme): ThemeSummary {
   };
 }
 
-/** Fetches every installed theme on a site, mapped to {@link ThemeSummary}. */
+/**
+ * Fetches every installed theme on a site, mapped to {@link ThemeSummary}. `filter.search`
+ * is applied client-side (case-insensitive, against `name`/`stylesheet`): the WP REST
+ * `/wp/v2/themes` endpoint accepts a `search` query param but silently ignores it.
+ */
 export async function fetchThemes(
   client: WpClient,
   filter: { status?: string; search?: string } = {},
@@ -76,9 +80,13 @@ export async function fetchThemes(
   const themes = await client.getAll<WpTheme>('/wp/v2/themes', {
     context: 'edit',
     status: filter.status,
-    search: filter.search,
   });
-  return themes.map(mapTheme);
+  const mapped = themes.map(mapTheme);
+  if (!filter.search) return mapped;
+  const q = filter.search.toLowerCase();
+  return mapped.filter(
+    (theme) => (theme.name ?? '').toLowerCase().includes(q) || theme.stylesheet.toLowerCase().includes(q),
+  );
 }
 
 /** Registers `list_themes`. See SPEC.md §4. */

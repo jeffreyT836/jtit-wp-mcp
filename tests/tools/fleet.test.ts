@@ -33,7 +33,7 @@ describe('tools/fleet', () => {
 
     const result = await harness.client.callTool({ name: 'fleet_health', arguments: {} });
     const data = JSON.parse(textOf(result));
-    expect(data.summary).toEqual({ sites: 2, ok: 1, failed: 1 });
+    expect(data.summary).toEqual({ sites: 2, ok: 1, failed: 1, skipped: 0 });
     const bySite = Object.fromEntries(data.results.map((r: { site: string }) => [r.site, r]));
     expect(bySite.a).toMatchObject({ ok: true, data: { ok: true, bridge: 'ok' } });
     expect(bySite.b).toMatchObject({ ok: true, data: { ok: false, bridge: 'missing' } });
@@ -50,6 +50,30 @@ describe('tools/fleet', () => {
     const data = JSON.parse(textOf(result));
     expect(data.results).toHaveLength(1);
     expect(data.results[0].site).toBe('a');
+  });
+
+  it('fleet_health never contacts an unavailable site and reports it as skipped, even when named explicitly', async () => {
+    const good = makeSite({ id: 'good' });
+    const bad = makeSite({ id: 'bad', available: false, unavailableReason: 'missing secret', password: null });
+    let contactedBad = false;
+    harness = await createHarness({
+      sites: [good, bad],
+      fetch: createMockFetch((url) => {
+        if (url.includes('bad.')) contactedBad = true;
+        return jsonResponse({ id: 1, roles: ['administrator'] });
+      }),
+    });
+
+    const result = await harness.client.callTool({
+      name: 'fleet_health',
+      arguments: { sites: ['good', 'bad'] },
+    });
+    const data = JSON.parse(textOf(result));
+
+    expect(contactedBad).toBe(false);
+    expect(data.summary).toMatchObject({ sites: 1, skipped: 1 });
+    expect(data.results.map((r: { site: string }) => r.site)).toEqual(['good']);
+    expect(data.skipped).toEqual([{ site: 'bad', reason: 'missing secret' }]);
   });
 
   it('fleet_updates_report summarizes pending counts and counts a bridge-missing site as failed', async () => {
@@ -71,7 +95,14 @@ describe('tools/fleet', () => {
 
     const result = await harness.client.callTool({ name: 'fleet_updates_report', arguments: {} });
     const data = JSON.parse(textOf(result));
-    expect(data.summary).toEqual({ sites: 2, failed: 1, pendingPlugins: 1, pendingThemes: 0, pendingCore: 1 });
+    expect(data.summary).toEqual({
+      sites: 2,
+      failed: 1,
+      pendingPlugins: 1,
+      pendingThemes: 0,
+      pendingCore: 1,
+      skipped: 0,
+    });
   });
 
   it('fleet_find_plugin matches case-insensitively on file, slug and name', async () => {
@@ -207,6 +238,31 @@ describe('tools/fleet', () => {
     expect(data.summary).toMatchObject({ failed: 1, updated: 0 });
     expect(harness.auditEntries).toHaveLength(1);
     expect(harness.auditEntries[0]).toMatchObject({ tool: 'fleet_update_plugin', site: 'flaky', ok: false });
+  });
+
+  it('fleet_update_plugin confirmed: reports a per-site failure and audits ok:false when the bridge responds 200 with success:false', async () => {
+    const site = makeSite({ id: 'flaky2' });
+    harness = await createHarness({
+      sites: [site],
+      fetch: createMockFetch((_url, init) => {
+        if (init?.method === 'POST') {
+          return jsonResponse({ results: [{ plugin: 'akismet/akismet.php', success: false, error: 'checksum mismatch' }] });
+        }
+        return jsonResponse({ plugins: [{ plugin: 'akismet/akismet.php', current_version: '5.3', new_version: '5.4' }] });
+      }),
+    });
+
+    const result = await harness.client.callTool({
+      name: 'fleet_update_plugin',
+      arguments: { plugin: 'akismet/akismet', confirm: true },
+    });
+    const data = JSON.parse(textOf(result));
+
+    expect(data.summary).toMatchObject({ updated: 0, failed: 1 });
+    const bySite = Object.fromEntries(data.results.map((r: { site: string; data?: { status: string; error?: string } }) => [r.site, r.data]));
+    expect(bySite.flaky2).toMatchObject({ status: 'failed', error: 'checksum mismatch' });
+    expect(harness.auditEntries).toHaveLength(1);
+    expect(harness.auditEntries[0]).toMatchObject({ tool: 'fleet_update_plugin', site: 'flaky2', ok: false, error: 'checksum mismatch' });
   });
 
   it('fleet_updates_report, fleet_find_plugin and fleet_user_audit surface an error for an unknown explicit site id', async () => {

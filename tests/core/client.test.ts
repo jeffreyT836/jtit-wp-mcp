@@ -59,7 +59,10 @@ describe('WpClient', () => {
   });
 
   it('never leaks the configured password when a site has no credentials at all', async () => {
-    const site = makeSite({ id: 'acme', password: null, available: false, unavailableReason: 'missing secret' });
+    // `available: true` here is contrived (the real loader always marks a secret-less site
+    // unavailable) — it isolates authHeader()'s own no-secret guard from the newer
+    // assertSiteAccessible() unavailable-site guard, which is covered separately below.
+    const site = makeSite({ id: 'acme', password: null, available: true, unavailableReason: null });
     const client = new WpClient(site, { fetch: createMockFetch(() => jsonResponse({})) });
     await expect(client.request('/wp/v2/users/me')).rejects.toMatchObject({ code: 'nb_mcp_no_secret' });
   });
@@ -144,6 +147,46 @@ describe('WpClient', () => {
       code: 'nb_mcp_bridge_missing',
       message: expect.stringContaining('nb-mcp-bridge mu-plugin not installed on acme'),
     });
+  });
+
+  it('refuses to send any request to an unavailable site, without calling fetch', async () => {
+    const site = makeSite({ id: 'acme', available: false, unavailableReason: 'missing secret', password: null });
+    let called = false;
+    const client = new WpClient(site, {
+      fetch: createMockFetch(() => {
+        called = true;
+        return jsonResponse({});
+      }),
+    });
+
+    await expect(client.request('/wp/v2/plugins')).rejects.toMatchObject({ code: 'nb_mcp_site_unavailable' });
+    expect(called).toBe(false);
+  });
+
+  it('refuses a non-https base URL when allowHttp is not set, without calling fetch or sending Basic auth', async () => {
+    const site = makeSite({
+      id: 'acme',
+      url: 'http://acme.example.com',
+      allowHttp: false,
+      available: true, // simulates a caller bypassing the loader's own scheme check
+    });
+    let called = false;
+    const client = new WpClient(site, {
+      fetch: createMockFetch(() => {
+        called = true;
+        return jsonResponse({});
+      }),
+    });
+
+    await expect(client.request('/wp/v2/plugins')).rejects.toMatchObject({ code: 'nb_mcp_insecure_url' });
+    expect(called).toBe(false);
+  });
+
+  it('allows a non-https base URL when allowHttp is true', async () => {
+    const site = makeSite({ id: 'acme', url: 'http://acme.example.com', allowHttp: true, available: true });
+    const client = new WpClient(site, { fetch: createMockFetch(() => jsonResponse({ ok: true })) });
+
+    await expect(client.request('/wp/v2/plugins')).resolves.toEqual({ ok: true });
   });
 
   it('does not remap an unrelated 404 from a bridge call', async () => {

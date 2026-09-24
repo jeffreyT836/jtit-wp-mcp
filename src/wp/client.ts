@@ -1,5 +1,5 @@
 import type { ResolvedSite } from '../config/schema.js';
-import { isWpJsonError, WpError } from './errors.js';
+import { assertSiteAccessible, isWpJsonError, WpError } from './errors.js';
 
 export type FetchLike = typeof fetch;
 
@@ -69,6 +69,7 @@ export class WpClient {
     path: string,
     options: WpRequestOptions = {},
   ): Promise<{ data: T; headers: Headers }> {
+    assertSiteAccessible(this.site);
     const url = `${this.baseUrl}${path}${buildQueryString(options.query)}`;
     const method = options.method ?? 'GET';
     const timeoutMs = options.timeoutMs ?? this.defaultTimeoutMs;

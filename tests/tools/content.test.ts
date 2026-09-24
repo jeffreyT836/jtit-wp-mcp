@@ -67,6 +67,23 @@ describe('tools/content', () => {
       expect(capturedUrl).not.toContain('context=edit');
     });
 
+    it('sends context=edit when status is explicitly "any" (WP requires it for non-public statuses)', async () => {
+      let capturedUrl = '';
+      harness = await createHarness({
+        sites: [makeSite({ id: 'acme' })],
+        fetch: createMockFetch((url) => {
+          capturedUrl = url;
+          return jsonResponse([]);
+        }),
+      });
+      await harness.client.callTool({
+        name: 'list_posts',
+        arguments: { site: 'acme', status: 'any' },
+      });
+      expect(capturedUrl).toContain('status=any');
+      expect(capturedUrl).toContain('context=edit');
+    });
+
     it('rejects an out-of-range per_page', async () => {
       harness = await createHarness({ sites: [makeSite({ id: 'acme' })] });
       const result = await harness.client.callTool({
@@ -123,6 +140,39 @@ describe('tools/content', () => {
       });
       expect(capturedUrl).toContain('status=spam');
       expect(capturedUrl).toContain('per_page=10');
+    });
+
+    it('maps status "approved" to the WP query value "approve"', async () => {
+      let capturedUrl = '';
+      harness = await createHarness({
+        sites: [makeSite({ id: 'acme' })],
+        fetch: createMockFetch((url) => {
+          capturedUrl = url;
+          return jsonResponse([]);
+        }),
+      });
+      await harness.client.callTool({
+        name: 'list_comments',
+        arguments: { site: 'acme', status: 'approved' },
+      });
+      expect(capturedUrl).toContain('status=approve');
+      expect(capturedUrl).not.toContain('status=approved');
+    });
+
+    it('maps status "any" to the WP query value "all"', async () => {
+      let capturedUrl = '';
+      harness = await createHarness({
+        sites: [makeSite({ id: 'acme' })],
+        fetch: createMockFetch((url) => {
+          capturedUrl = url;
+          return jsonResponse([]);
+        }),
+      });
+      await harness.client.callTool({
+        name: 'list_comments',
+        arguments: { site: 'acme', status: 'any' },
+      });
+      expect(capturedUrl).toContain('status=all');
     });
   });
 

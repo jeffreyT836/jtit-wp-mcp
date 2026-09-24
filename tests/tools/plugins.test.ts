@@ -52,6 +52,30 @@ describe('tools/plugins', () => {
     ]);
   });
 
+  it('list_plugins refuses an unavailable site (e.g. http:// without allowHttp) without ever sending the Basic auth header', async () => {
+    const site = makeSite({
+      id: 'insecure',
+      url: 'http://insecure.example.com',
+      allowHttp: false,
+      available: false,
+      unavailableReason: 'site url is not https:// and allowHttp is not enabled',
+    });
+    let called = false;
+    harness = await createHarness({
+      sites: [site],
+      fetch: createMockFetch(() => {
+        called = true;
+        return jsonResponse([]);
+      }),
+    });
+
+    const result = await harness.client.callTool({ name: 'list_plugins', arguments: { site: 'insecure' } });
+
+    expect(called).toBe(false);
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toMatch(/https/);
+  });
+
   it('list_plugins surfaces an error for an unknown site', async () => {
     harness = await createHarness({ sites: [makeSite({ id: 'acme' })] });
     const result = await harness.client.callTool({ name: 'list_plugins', arguments: { site: 'nope' } });
@@ -101,15 +125,52 @@ describe('tools/plugins', () => {
     expect(textOf(result)).toContain('invalid plugin identifier');
   });
 
-  it('rejects a plugin identifier with no slash', async () => {
+  it('accepts a single-file plugin identifier (no directory), matching WP core\'s own route pattern', async () => {
+    const site = makeSite({ id: 'acme' });
+    let sawUrl: string | undefined;
+    harness = await createHarness({
+      sites: [site],
+      fetch: createMockFetch((url) => {
+        sawUrl = url;
+        return jsonResponse({ plugin: 'hello', status: 'active' });
+      }),
+    });
+
+    const dryRun = await harness.client.callTool({
+      name: 'activate_plugin',
+      arguments: { site: 'acme', plugin: 'hello' },
+    });
+    expect(JSON.parse(textOf(dryRun))).toEqual({
+      dryRun: true,
+      wouldDo: { action: 'activate_plugin', site: 'acme', plugin: 'hello' },
+    });
+
+    const confirmed = await harness.client.callTool({
+      name: 'activate_plugin',
+      arguments: { site: 'acme', plugin: 'hello.php', confirm: true },
+    });
+    expect(confirmed.isError).toBeUndefined();
+    expect(sawUrl).toContain('/wp/v2/plugins/hello');
+    expect(sawUrl).not.toContain('/wp/v2/plugins/hello/');
+  });
+
+  it('rejects a plugin identifier with a dot inside a segment, and one with more than one slash', async () => {
     const site = makeSite({ id: 'acme' });
     harness = await createHarness({ sites: [site] });
-    const result = await harness.client.callTool({
+
+    const dotted = await harness.client.callTool({
       name: 'activate_plugin',
-      arguments: { site: 'acme', plugin: 'akismet' },
+      arguments: { site: 'acme', plugin: 'aki.smet/akismet' },
     });
-    expect(result.isError).toBe(true);
-    expect(textOf(result)).toContain('invalid plugin identifier');
+    expect(dotted.isError).toBe(true);
+    expect(textOf(dotted)).toContain('invalid plugin identifier');
+
+    const tooManySegments = await harness.client.callTool({
+      name: 'activate_plugin',
+      arguments: { site: 'acme', plugin: 'a/b/c' },
+    });
+    expect(tooManySegments.isError).toBe(true);
+    expect(textOf(tooManySegments)).toContain('invalid plugin identifier');
   });
 
   it('activate_plugin refuses a confirmed write on a readOnly site, without calling POST', async () => {

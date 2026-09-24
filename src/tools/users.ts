@@ -274,7 +274,7 @@ export function register(server: McpServer, ctx: ToolContext): void {
     inputSchema: {
       site: z.string().describe('Site id from sites.json'),
       id: userIdSchema.describe('User id to delete.'),
-      reassign: z.number().int().nonnegative().describe('User id to reassign this user’s content to; must differ from id.'),
+      reassign: z.number().int().positive().describe('User id to reassign this user’s content to; must differ from id.'),
       confirm: z.boolean().optional().describe('Must be true to actually delete the user.'),
     },
     annotations: { destructiveHint: true, idempotentHint: false },

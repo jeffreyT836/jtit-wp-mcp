@@ -21,6 +21,12 @@ services:
     profiles: ["http"]
     environment:
       MCP_TRANSPORT: http
+      # Explicit, matching the host:container port mapping below (both 3000) — the server
+      # accepts a Host header of "localhost"/"127.0.0.1" *or* "<host>:3000" for these. If you
+      # change the host-side port (e.g. "127.0.0.1:3399:3000"), add the matching "host:3399"
+      # entries here too — see README §3.3/§4.2 for why (Docker port mapping changes the Host
+      # header the server sees, but not MCP_HTTP_PORT, which stays the container's own port).
+      MCP_HTTP_ALLOWED_HOSTS: "localhost:3000,127.0.0.1:3000"
     env_file: .env
     ports:
       - "127.0.0.1:3000:3000"

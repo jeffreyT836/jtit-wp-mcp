@@ -183,19 +183,28 @@ describe('runFleet', () => {
 });
 
 describe('selectSites', () => {
-  it('defaults to all available sites when no filter is given', () => {
+  it('defaults to all available sites when no filter is given, with no sites skipped', () => {
     const registry = new SiteRegistry([
       makeSite({ id: 'a', available: true }),
       makeSite({ id: 'b', available: false, unavailableReason: 'no secret' }),
     ]);
-    const selected = selectSites(registry);
+    const { selected, skipped } = selectSites(registry);
     expect(selected.map((s) => s.id)).toEqual(['a']);
+    expect(skipped).toEqual([{ site: 'b', reason: 'no secret' }]);
   });
 
-  it('honors an explicit sites list even if unavailable', () => {
+  it('excludes an unavailable site from an explicit sites list and reports it skipped, instead of contacting it', () => {
     const registry = new SiteRegistry([makeSite({ id: 'a', available: false, unavailableReason: 'x' })]);
-    const selected = selectSites(registry, { sites: ['a'] });
+    const { selected, skipped } = selectSites(registry, { sites: ['a'] });
+    expect(selected).toEqual([]);
+    expect(skipped).toEqual([{ site: 'a', reason: 'x' }]);
+  });
+
+  it('honors an explicit sites list of available sites as-is', () => {
+    const registry = new SiteRegistry([makeSite({ id: 'a', available: true })]);
+    const { selected, skipped } = selectSites(registry, { sites: ['a'] });
     expect(selected.map((s) => s.id)).toEqual(['a']);
+    expect(skipped).toEqual([]);
   });
 
   it('filters by tags', () => {
@@ -203,7 +212,7 @@ describe('selectSites', () => {
       makeSite({ id: 'a', tags: ['prod'] }),
       makeSite({ id: 'b', tags: ['staging'] }),
     ]);
-    expect(selectSites(registry, { tags: ['prod'] }).map((s) => s.id)).toEqual(['a']);
+    expect(selectSites(registry, { tags: ['prod'] }).selected.map((s) => s.id)).toEqual(['a']);
   });
 });
 

@@ -13,3 +13,6 @@ Baseline: git init, commit "chore: spec" (see below).
 ## Attempts (append-only)
 - W1 attempt 1 (sonnet): DONE, commit f221d87, 52 tests, 94% lines. Lead spot-check green.
 - W2a/W2b/W2c dispatched in parallel (sonnet), disjoint write sets, baseline f221d87.
+- W2 all DONE; refactor commit; bridge b18091d; README da00798.
+- Verify #1 (blind, @da00798): FAIL — 1 CRITICAL (http/unavailable sites contacted), 4 HIGH (http host check, shared stateless server, update_core, get_plugins include), 3 MED, 3 LOW.
+- Fix wave dispatched: TS worker (src/tests/README/compose) ∥ PHP worker (wordpress/**).

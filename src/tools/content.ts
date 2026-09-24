@@ -46,6 +46,17 @@ function excerpt(html: string | undefined, maxLength: number): string {
   return text.length > maxLength ? text.slice(0, maxLength) : text;
 }
 
+/**
+ * Maps the tool's user-friendly `status` values to the ones the WP comment REST query
+ * actually understands: `approved` -> `approve`, `any` -> `all` (WP rejects/ignores the
+ * former spellings). Other values (`hold`, `spam`, `trash`) pass through unchanged.
+ */
+function mapCommentStatusForQuery(status: string): string {
+  if (status === 'approved') return 'approve';
+  if (status === 'any') return 'all';
+  return status;
+}
+
 function mapComment(comment: WpComment) {
   return {
     id: comment.id,
@@ -123,7 +134,7 @@ export function register(server: McpServer, ctx: ToolContext): void {
       try {
         const client = ctx.registry.client(siteId);
         const query: Record<string, string | number> = {
-          status: status ?? 'hold',
+          status: mapCommentStatusForQuery(status ?? 'hold'),
           per_page: per_page ?? 20,
         };
         if (search) query.search = search;

@@ -259,6 +259,23 @@ describe('tools/users', () => {
   });
 
   describe('delete_user', () => {
+    it('rejects reassign: 0 (must be a positive user id)', async () => {
+      let called = false;
+      harness = await createHarness({
+        sites: [makeSite({ id: 'acme' })],
+        fetch: createMockFetch(() => {
+          called = true;
+          return jsonResponse({});
+        }),
+      });
+      const result = await harness.client.callTool({
+        name: 'delete_user',
+        arguments: { site: 'acme', id: 9, reassign: 0 },
+      });
+      expect(result.isError).toBe(true);
+      expect(called).toBe(false);
+    });
+
     it('refuses when reassign equals id, without any network call', async () => {
       let called = false;
       harness = await createHarness({

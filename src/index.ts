@@ -42,17 +42,16 @@ async function main(): Promise<void> {
     readOnlyGlobal: env.MCP_READ_ONLY,
   };
 
-  const server = createServer(ctx);
-
   if (env.MCP_TRANSPORT === 'http') {
     if (!env.MCP_HTTP_TOKEN) {
       fail('MCP_HTTP_TOKEN is required when MCP_TRANSPORT=http (min 32 chars)');
     }
     const { startHttpServer } = await import('./http.js');
-    startHttpServer(server, ctx);
+    await startHttpServer(ctx);
     return;
   }
 
+  const server = createServer(ctx);
   const transport = new StdioServerTransport();
   await server.connect(transport);
   process.stderr.write('[wp-fleet-mcp] stdio server ready\n');

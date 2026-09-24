@@ -1,5 +1,6 @@
 import type { ResolvedSite } from '../config/schema.js';
 import { WpClient, type FetchLike } from './client.js';
+import { assertSiteAccessible } from './errors.js';
 
 /** Thrown by {@link SiteRegistry.get} when a site id is not present in sites.json. */
 export class SiteNotFoundError extends Error {
@@ -46,11 +47,18 @@ export class SiteRegistry {
     return site;
   }
 
-  /** Returns (creating and caching if needed) the {@link WpClient} for a site id. */
+  /**
+   * Returns (creating and caching if needed) the {@link WpClient} for a site id. Refuses
+   * (throws a {@link WpError} via {@link assertSiteAccessible}) when the site is unavailable
+   * or has a non-https URL without `allowHttp` — defense-in-depth alongside the same check in
+   * {@link WpClient}'s `rawRequest`, so an unavailable/insecure site is never contacted even by
+   * a call path that only goes through the registry.
+   */
   client(id: string): WpClient {
     const existing = this.clients.get(id);
     if (existing) return existing;
     const site = this.get(id);
+    assertSiteAccessible(site);
     const client = new WpClient(site, {
       fetch: this.options.fetch,
       defaultTimeoutMs: this.options.defaultTimeoutMs,

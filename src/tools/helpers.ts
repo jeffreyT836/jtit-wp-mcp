@@ -155,19 +155,40 @@ export interface SiteFilter {
   tags?: string[];
 }
 
+/** One site excluded from a fleet-tool run because it is unavailable, with the reason why. */
+export interface SkippedSite {
+  site: string;
+  reason: string;
+}
+
+export interface SiteSelection {
+  /** Available sites the fleet tool should actually contact. */
+  selected: ResolvedSite[];
+  /** Sites matching the filter that were excluded because `site.available` is false. */
+  skipped: SkippedSite[];
+}
+
 /**
- * Resolves a fleet tool's `{ sites?, tags? }` filter to a concrete list of sites.
- * With no filter, defaults to every *available* site (SPEC.md §4). An explicit `sites`
- * list is honored as-is (including unavailable sites, so callers see why they failed).
+ * Resolves a fleet tool's `{ sites?, tags? }` filter to a concrete list of sites. With no
+ * filter, considers every configured site (SPEC.md §4). An unknown site id in an explicit
+ * `sites` list still throws (via {@link SiteRegistry.get}) — that is a caller mistake, not
+ * an unavailable site. An *unavailable* site (missing secret, insecure URL) is never
+ * contacted, whether it came from an explicit `sites` list or the default "every site":
+ * it is excluded from `selected` and reported in `skipped` so fleet tools can surface it in
+ * their summary instead of silently dropping it or failing the whole call.
  */
-export function selectSites(registry: SiteRegistry, filter: SiteFilter = {}): ResolvedSite[] {
+export function selectSites(registry: SiteRegistry, filter: SiteFilter = {}): SiteSelection {
   const explicitSites = filter.sites && filter.sites.length > 0;
   const base = explicitSites ? filter.sites!.map((id) => registry.get(id)) : registry.list();
   const tagged =
     filter.tags && filter.tags.length > 0
       ? base.filter((site) => filter.tags!.every((tag) => site.tags.includes(tag)))
       : base;
-  return explicitSites ? tagged : tagged.filter((site) => site.available);
+  const selected = tagged.filter((site) => site.available);
+  const skipped = tagged
+    .filter((site) => !site.available)
+    .map((site) => ({ site: site.id, reason: site.unavailableReason ?? 'site is unavailable' }));
+  return { selected, skipped };
 }
 
 interface ToolAnnotations {

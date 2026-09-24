@@ -1,3 +1,5 @@
+import type { ResolvedSite } from '../config/schema.js';
+
 /** Redacts an Application Password / Basic auth token from an arbitrary string. */
 export function sanitizeMessage(message: string): string {
   return message
@@ -23,6 +25,33 @@ export class WpError extends Error {
     this.status = params.status;
     this.code = params.code;
     this.site = params.site;
+  }
+}
+
+/**
+ * Refuses to let a site be contacted when it is unavailable, or when its base URL is not
+ * `https://` and `allowHttp` is not enabled. This is defense-in-depth: `loadConfig` already
+ * computes `available`/`unavailableReason` from these same conditions at startup (SPEC.md §1),
+ * but every call path that reaches the network (WpClient.rawRequest, SiteRegistry.client)
+ * re-checks here so a site can never be contacted by accident (e.g. a caller passing a
+ * hand-built ResolvedSite, or a future code path that skips the registry's normal lookup).
+ */
+export function assertSiteAccessible(site: ResolvedSite): void {
+  if (!site.available) {
+    throw new WpError({
+      status: 0,
+      code: 'nb_mcp_site_unavailable',
+      message: `refusing to contact site ${site.id}: ${site.unavailableReason ?? 'site is unavailable'}`,
+      site: site.id,
+    });
+  }
+  if (!site.url.startsWith('https://') && !site.allowHttp) {
+    throw new WpError({
+      status: 0,
+      code: 'nb_mcp_insecure_url',
+      message: `refusing to contact site ${site.id}: url is not https:// and allowHttp is not enabled`,
+      site: site.id,
+    });
   }
 }
 

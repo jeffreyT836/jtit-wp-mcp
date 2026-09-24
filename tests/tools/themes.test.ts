@@ -70,7 +70,7 @@ describe('tools/themes', () => {
     ]);
   });
 
-  it('list_themes forwards status and search filters', async () => {
+  it('list_themes forwards the status filter to the API', async () => {
     const site = makeSite({ id: 'acme' });
     let sawUrl = '';
     harness = await createHarness({
@@ -83,7 +83,35 @@ describe('tools/themes', () => {
 
     await harness.client.callTool({ name: 'list_themes', arguments: { site: 'acme', status: 'active', search: 'twenty' } });
     expect(sawUrl).toContain('status=active');
-    expect(sawUrl).toContain('search=twenty');
+  });
+
+  it('list_themes filters by search client-side (name/stylesheet, case-insensitive), since the WP endpoint ignores it', async () => {
+    const site = makeSite({ id: 'acme' });
+    let sawUrl = '';
+    harness = await createHarness({
+      sites: [site],
+      fetch: createMockFetch((url) => {
+        sawUrl = url;
+        // Simulates the real WP behavior: `search` is accepted in the query string but
+        // ignored server-side — every theme is returned regardless.
+        return jsonResponse(
+          [
+            { stylesheet: 'twentytwentyfour', name: { rendered: 'Twenty Twenty-Four' } },
+            { stylesheet: 'child-theme', name: 'Child Theme' },
+          ],
+          { headers: { 'x-wp-totalpages': '1' } },
+        );
+      }),
+    });
+
+    const result = await harness.client.callTool({
+      name: 'list_themes',
+      arguments: { site: 'acme', search: 'TWENTY' },
+    });
+    const data = JSON.parse(textOf(result));
+
+    expect(sawUrl).not.toContain('search=');
+    expect(data.map((t: { stylesheet: string }) => t.stylesheet)).toEqual(['twentytwentyfour']);
   });
 
   it('surfaces a sanitized error for an unreachable site', async () => {

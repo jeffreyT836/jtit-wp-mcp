@@ -102,7 +102,7 @@ export function register(server: McpServer, ctx: ToolContext): void {
     },
     async ({ sites, tags }) => {
       try {
-        const targets = selectSites(ctx.registry, { sites, tags });
+        const { selected: targets, skipped } = selectSites(ctx.registry, { sites, tags });
         const results = await runFleet(
           targets,
           (site) => fleetHealthForSite(ctx.registry.client(site.id), site),
@@ -112,8 +112,9 @@ export function register(server: McpServer, ctx: ToolContext): void {
           sites: results.length,
           ok: results.filter((r) => r.ok && r.data?.ok).length,
           failed: results.filter((r) => !r.ok || !r.data?.ok).length,
+          skipped: skipped.length,
         };
-        return jsonResult({ summary, results });
+        return jsonResult({ summary, results, skipped });
       } catch (err) {
         return errorResult(err);
       }
@@ -134,7 +135,7 @@ export function register(server: McpServer, ctx: ToolContext): void {
     },
     async ({ sites, tags, refresh }) => {
       try {
-        const targets = selectSites(ctx.registry, { sites, tags });
+        const { selected: targets, skipped } = selectSites(ctx.registry, { sites, tags });
         const results = await runFleet(
           targets,
           (site) => fetchBridgeUpdates(ctx.registry.client(site.id), refresh),
@@ -153,7 +154,11 @@ export function register(server: McpServer, ctx: ToolContext): void {
           },
           { failed: 0, pendingPlugins: 0, pendingThemes: 0, pendingCore: 0 },
         );
-        return jsonResult({ summary: { sites: results.length, ...summary }, results });
+        return jsonResult({
+          summary: { sites: results.length, ...summary, skipped: skipped.length },
+          results,
+          skipped,
+        });
       } catch (err) {
         return errorResult(err);
       }
@@ -174,7 +179,7 @@ export function register(server: McpServer, ctx: ToolContext): void {
     },
     async ({ query, sites, tags }) => {
       try {
-        const targets = selectSites(ctx.registry, { sites, tags });
+        const { selected: targets, skipped } = selectSites(ctx.registry, { sites, tags });
         const q = query.toLowerCase();
         const results = await runFleet(
           targets,
@@ -195,10 +200,12 @@ export function register(server: McpServer, ctx: ToolContext): void {
           sitesChecked: results.length,
           sitesWithMatch: results.filter((r) => r.ok && (r.data?.length ?? 0) > 0).length,
           failed: results.filter((r) => !r.ok).length,
+          skipped: skipped.length,
         };
         return jsonResult({
           summary,
           results: results.map((r) => ({ site: r.site, ok: r.ok, error: r.error, matches: r.data ?? [] })),
+          skipped,
         });
       } catch (err) {
         return errorResult(err);
@@ -221,7 +228,7 @@ export function register(server: McpServer, ctx: ToolContext): void {
     },
     async ({ role, email, sites, tags }) => {
       try {
-        const targets = selectSites(ctx.registry, { sites, tags });
+        const { selected: targets, skipped } = selectSites(ctx.registry, { sites, tags });
         const results = await runFleet(
           targets,
           (site) => fetchUsersForAudit(ctx.registry.client(site.id), role ?? 'administrator', email),
@@ -231,10 +238,12 @@ export function register(server: McpServer, ctx: ToolContext): void {
           sitesChecked: results.length,
           totalUsers: results.reduce((sum, r) => sum + (r.data?.length ?? 0), 0),
           failed: results.filter((r) => !r.ok).length,
+          skipped: skipped.length,
         };
         return jsonResult({
           summary,
           results: results.map((r) => ({ site: r.site, ok: r.ok, error: r.error, users: r.data ?? [] })),
+          skipped,
         });
       } catch (err) {
         return errorResult(err);
@@ -260,7 +269,7 @@ export function register(server: McpServer, ctx: ToolContext): void {
         try {
           const { route, file } = validatePluginId(plugin);
           const confirmed = confirm === true;
-          const targets = selectSites(ctx.registry, { sites, tags });
+          const { selected: targets, skipped } = selectSites(ctx.registry, { sites, tags });
 
           const results = await runFleet(
             targets,
@@ -286,11 +295,30 @@ export function register(server: McpServer, ctx: ToolContext): void {
                 };
               }
               try {
-                const data = await client.bridge('/updates/plugins', {
+                const data = await client.bridge<{
+                  results?: Array<{ plugin: string; success: boolean; error?: string }>;
+                }>('/updates/plugins', {
                   method: 'POST',
                   body: { plugins: [file] },
                   timeoutMs: ctx.env.WP_UPDATE_TIMEOUT_MS,
                 });
+                const bridgeResult = data.results?.[0];
+                if (bridgeResult && bridgeResult.success === false) {
+                  const message = bridgeResult.error ?? `bridge reported failure updating ${file}`;
+                  ctx.audit.log({
+                    tool: 'fleet_update_plugin',
+                    site: site.id,
+                    args: { plugin, confirm: true },
+                    ok: false,
+                    error: message,
+                  });
+                  return {
+                    status: 'failed' as const,
+                    from: info.current_version,
+                    to: info.new_version,
+                    error: message,
+                  };
+                }
                 ctx.audit.log({ tool: 'fleet_update_plugin', site: site.id, args: { plugin, confirm: true }, ok: true });
                 return { status: 'updated' as const, from: info.current_version, to: info.new_version, data };
               } catch (err) {
@@ -326,13 +354,22 @@ export function register(server: McpServer, ctx: ToolContext): void {
                 case 'no_update_available':
                   acc.noUpdateAvailable += 1;
                   break;
+                case 'failed':
+                  acc.failed += 1;
+                  break;
               }
               return acc;
             },
             { updated: 0, wouldUpdate: 0, skippedReadOnly: 0, noUpdateAvailable: 0, failed: 0 },
           );
 
-          return jsonResult({ dryRun: !confirmed, plugin: route, summary, results });
+          return jsonResult({
+            dryRun: !confirmed,
+            plugin: route,
+            summary: { ...summary, skipped: skipped.length },
+            results,
+            skipped,
+          });
         } catch (err) {
           return errorResult(err);
         }

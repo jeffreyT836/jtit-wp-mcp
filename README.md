@@ -114,10 +114,35 @@ docker compose --profile http up -d mcp-http
 Dit start de `mcp-http`-service uit `docker-compose.yml`: gebonden aan `127.0.0.1:3000`,
 `read_only` rootfs, `cap_drop: [ALL]`, `no-new-privileges`. Vereist `MCP_HTTP_TOKEN` (min. 32
 tekens) in `.env`; elke request moet `Authorization: Bearer <token>` meesturen
-(timing-safe vergeleken). `MCP_HTTP_ALLOWED_HOSTS` beschermt tegen DNS-rebinding.
+(timing-safe vergeleken). `MCP_HTTP_ALLOWED_HOSTS` beschermt tegen DNS-rebinding: de server
+vergelijkt de binnenkomende `Host`-header exact tegen deze lijst.
 
-Poort al in gebruik op je machine? Pas de host-poort in de `ports:`-mapping aan, bijv.
-`"127.0.0.1:3001:3000"` (de container-poort 3000 hoeft niet te veranderen).
+**`MCP_HTTP_ALLOWED_HOSTS` en poorten.** Een "kale" entry zonder `:poort` (bijv. `localhost`)
+wordt automatisch ook geaccepteerd als `<entry>:<MCP_HTTP_PORT>`, omdat dat de `Host`-header
+is die een normale request stuurt (bijv. `localhost:3000` als `MCP_HTTP_PORT=3000`). Zonder
+die uitbreiding zou elke gewone request met `Invalid Host header` geweigerd worden. Een entry
+die zelf al een poort bevat (bijv. `example.com:8443`) wordt ongewijzigd gebruikt.
+
+`MCP_HTTP_PORT` is echter de poort **in de container**, niet per se de poort waarmee een
+client verbindt. Map je de host-poort anders (`docker run -p 127.0.0.1:3399:3000`, of een
+reverse proxy), dan ziet de container een `Host`-header met die externe poort (bijv.
+`localhost:3399`) — die kan niet automatisch afgeleid worden uit `MCP_HTTP_PORT=3000`. Zet in
+dat geval de externe host:poort-combinatie expliciet in `MCP_HTTP_ALLOWED_HOSTS`, bijv.:
+
+```bash
+docker run -d --rm \
+  --env-file .env \
+  -e MCP_TRANSPORT=http \
+  -e MCP_HTTP_ALLOWED_HOSTS=localhost:3399,127.0.0.1:3399 \
+  -v "$PWD/config/sites.json:/app/config/sites.json:ro" \
+  -p 127.0.0.1:3399:3000 \
+  wp-fleet-mcp
+```
+
+Poort al in gebruik op je machine via `docker compose`? Pas de host-poort in de
+`ports:`-mapping aan, bijv. `"127.0.0.1:3001:3000"` (de container-poort 3000 hoeft niet te
+veranderen) — en werk `MCP_HTTP_ALLOWED_HOSTS` in dezelfde service dan bij naar
+`localhost:3001,127.0.0.1:3001`, net als in het `docker run`-voorbeeld hierboven.
 
 ## 4. Configuratie
 
@@ -147,7 +172,7 @@ server (exit 1).
 | `MCP_HTTP_PORT` | `3000` | Poort in http-modus |
 | `MCP_HTTP_HOST` | `0.0.0.0` | Bind-adres in http-modus |
 | `MCP_HTTP_TOKEN` | — | Verplicht in http-modus, min. 32 tekens, Bearer-auth |
-| `MCP_HTTP_ALLOWED_HOSTS` | `localhost,127.0.0.1` | Allowlist tegen DNS-rebinding |
+| `MCP_HTTP_ALLOWED_HOSTS` | `localhost,127.0.0.1` | Allowlist tegen DNS-rebinding; elke entry telt ook als `entry:MCP_HTTP_PORT` (zie §3.3 voor Docker-poortmapping) |
 | `MCP_READ_ONLY` | `false` | `true` → write-tools worden niet geregistreerd |
 | `WP_TIMEOUT_MS` | `30000` | Timeout voor gewone requests |
 | `WP_UPDATE_TIMEOUT_MS` | `300000` | Timeout voor update-operaties |

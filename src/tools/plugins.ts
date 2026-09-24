@@ -12,32 +12,43 @@ export interface ValidatedPluginId {
   file: string;
 }
 
-const PLUGIN_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._-]*$/;
+/**
+ * One path segment as the WP REST plugins route allows it: `[^.\/]+` — one or more
+ * characters, no dots and no slashes. Matches `(?P<plugin>[^.\/]+(?:\/[^.\/]+)?)` in WP core.
+ */
+const PLUGIN_SEGMENT_RE = /^[^./]+$/;
 
 /**
  * Validates and normalizes a plugin identifier. Accepts it with or without a trailing
- * `.php`. Rejects anything that is not a strict `dir/file` shape — in particular no `..`,
- * no leading `/`, and no backslashes — so a caller-supplied identifier can never be used
- * to traverse outside the plugins directory.
+ * `.php`, and accepts either a single-file plugin (`hello`, no directory — e.g. Hello
+ * Dolly's `hello.php`) or the usual `dir/file` shape, matching WP core's own route pattern
+ * `(?P<plugin>[^.\/]+(?:\/[^.\/]+)?)`. Rejects anything else — in particular `..`, a leading
+ * `/`, backslashes, more than one `/`, or a dot inside a segment (only the trailing `.php`
+ * may contain one) — so a caller-supplied identifier can never be used to traverse outside
+ * the plugins directory.
  */
 export function validatePluginId(raw: string): ValidatedPluginId {
   const value = typeof raw === 'string' ? raw.trim() : '';
   if (!value || value.startsWith('/') || value.includes('..') || value.includes('\\')) {
     throw new Error(`invalid plugin identifier: ${JSON.stringify(raw)}`);
   }
-  const route = value.endsWith('.php') ? value.slice(0, -4) : value;
-  if (!PLUGIN_ID_RE.test(route)) {
+  const withoutPhp = value.endsWith('.php') ? value.slice(0, -4) : value;
+  const segments = withoutPhp.split('/');
+  if (segments.length > 2 || segments.some((segment) => !PLUGIN_SEGMENT_RE.test(segment))) {
     throw new Error(
-      `invalid plugin identifier: ${JSON.stringify(raw)} (expected "dir/file", e.g. "akismet/akismet")`,
+      `invalid plugin identifier: ${JSON.stringify(raw)} (expected "file" or "dir/file", e.g. "hello" or "akismet/akismet")`,
     );
   }
+  const route = segments.join('/');
   return { route, file: `${route}.php` };
 }
 
-/** Builds the `/wp/v2/plugins/<dir>/<file>` REST path for a validated `dir/file` route. */
+/**
+ * Builds the `/wp/v2/plugins/<route>` REST path for a validated route, which is either
+ * `file` (single-file plugin) or `dir/file`.
+ */
 export function pluginRestPath(route: string): string {
-  const [dir, file] = route.split('/');
-  return `/wp/v2/plugins/${encodeURIComponent(dir ?? '')}/${encodeURIComponent(file ?? '')}`;
+  return `/wp/v2/plugins/${route.split('/').map(encodeURIComponent).join('/')}`;
 }
 
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{1,99}$/;
