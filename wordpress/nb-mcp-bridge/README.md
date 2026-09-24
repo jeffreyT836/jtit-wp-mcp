@@ -60,11 +60,28 @@ before upgrading each item: a plugin/theme with nothing pending is reported
 as `{success: false, from, to: from, error: "No update available."}` rather
 than being sent through the upgrader.
 
-`POST /updates/core` selects its offer from `get_core_updates()` by
-`response === "upgrade"` (preferring the site's locale, then `en_US`), since
-`find_core_update()` matches an offer's `current` field — which is the
-offer's *target* version, not the installed one — and would otherwise never
-match.
+`GET /updates` reads core offers from the raw `update_core` site transient
+rather than `get_core_updates()`, because `get_core_updates()` unconditionally
+drops every offer with `response === "autoupdate"`. On a site a full major
+version behind, the same-branch minor/security release is served as an
+`autoupdate` offer (WordPress only proposes an `upgrade` offer for the
+newest major branch), so relying on `get_core_updates()` would hide it
+entirely. Each core row in the response also has a `type` field
+(`"minor"` or `"major"`), computed by comparing the offer's target version
+to the installed version's `x.y` branch.
+
+`POST /updates/core` selects from the same deduplicated offer list
+(preferring the site's locale, then `en_US`, then whatever is left) rather
+than `find_core_update()`, since `find_core_update()` matches an offer's
+`current` field — which is the offer's *target* version, not the installed
+one — and would otherwise never match. With `allow_major` false (the
+default), it picks the highest offer that stays within the installed
+version's own `x.y` branch (e.g. the latest `7.0.x` while running `7.0.1`),
+which is typically an `autoupdate` offer. It returns `409
+nb_mcp_major_update_blocked` only when no same-branch offer exists but a
+different-branch (major) one does; if neither exists, it reports "No core
+update is available." With `allow_major` true, it picks the highest offer
+across all branches.
 
 ## Filter hooks
 

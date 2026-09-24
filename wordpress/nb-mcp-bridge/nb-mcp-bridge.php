@@ -5,7 +5,7 @@
  * Description:       Companion mu-plugin for wp-fleet-mcp. Exposes REST endpoints
  *                     (namespace nb-mcp/v1) for status, update management and role
  *                     information that WordPress core REST does not provide.
- * Version:           1.0.1
+ * Version:           1.0.2
  * Requires at least: 6.0
  * Requires PHP:      7.4
  * Author:            wp-fleet-mcp
@@ -18,7 +18,7 @@
 defined( 'ABSPATH' ) || exit;
 
 // Reported by GET /nb-mcp/v1/status; keep in sync with the "Version" header above.
-define( 'NB_MCP_BRIDGE_VERSION', '1.0.1' );
+define( 'NB_MCP_BRIDGE_VERSION', '1.0.2' );
 
 /**
  * Register all nb-mcp/v1 REST routes.
@@ -347,17 +347,20 @@ function nb_mcp_bridge_get_updates( WP_REST_Request $request ) {
 		wp_update_themes();
 	}
 
-	$core = array();
-	foreach ( (array) get_core_updates() as $update ) {
-		if ( ! is_object( $update ) ) {
-			continue;
-		}
+	$installed_version = get_bloginfo( 'version' );
 
+	// Include 'autoupdate' offers alongside 'upgrade' ones: get_core_updates()
+	// drops 'autoupdate' unconditionally, which hides the same-branch
+	// minor/security release on a site that is a major version behind. See
+	// nb_mcp_bridge_get_core_update_offers() for the full explanation.
+	$core = array();
+	foreach ( nb_mcp_bridge_get_core_update_offers() as $update ) {
 		$core[] = array(
-			'current'  => get_bloginfo( 'version' ),
+			'current'  => $installed_version,
 			'version'  => isset( $update->version ) ? $update->version : '',
 			'response' => isset( $update->response ) ? $update->response : '',
 			'locale'   => isset( $update->locale ) ? $update->locale : '',
+			'type'     => nb_mcp_bridge_is_major_version_change( $installed_version, $update->current ) ? 'major' : 'minor',
 		);
 	}
 
@@ -664,45 +667,148 @@ function nb_mcp_bridge_is_major_version_change( $from, $to ) {
 }
 
 /**
- * Pick the best available core upgrade offer from get_core_updates().
+ * Fetch every real core update offer, both 'upgrade' and 'autoupdate'
+ * responses, deduplicated to one entry per (response, target version) pair
+ * by locale preference.
  *
- * find_core_update( $version, $locale ) matches an offer's `current` field,
- * which is the offer's TARGET version, against $version — so calling it with
- * get_bloginfo('version') only ever matches a same-version reinstall/security
- * offer, never a genuine newer-version upgrade. Instead, scan the offers WP
- * already fetched via get_core_updates() for a response of 'upgrade',
- * preferring the site's locale, then en_US, then whatever is left.
+ * get_core_updates() cannot be used for this: per wp-admin/includes/update.php
+ * (~line 64) it unconditionally does `if ( 'autoupdate' === $update->response )
+ * { continue; }` before its $options (including 'dismissed') are even
+ * consulted, so every 'autoupdate' offer is dropped no matter what is passed
+ * in. On a site a full major version behind, the same-branch minor/security
+ * release is served as an 'autoupdate' offer (WP only proposes an 'upgrade'
+ * for the newest major branch), so relying on get_core_updates() alone
+ * silently hides the very release /updates/core should be able to install by
+ * default. Read the raw update_core site transient instead, which carries
+ * every offer WordPress fetched from the API, and filter/dedupe ourselves.
  *
- * @return object|null The chosen update offer, or null if none is available.
+ * @return object[] Offers, one per distinct (response, current) pair.
  */
-function nb_mcp_bridge_select_core_update() {
-	$offers = array();
+function nb_mcp_bridge_get_core_update_offers() {
+	$transient = get_site_transient( 'update_core' );
 
-	foreach ( (array) get_core_updates() as $update ) {
-		if ( is_object( $update ) && isset( $update->response ) && 'upgrade' === $update->response ) {
-			$offers[] = $update;
-		}
+	if ( ! isset( $transient->updates ) || ! is_array( $transient->updates ) ) {
+		return array();
 	}
 
-	if ( empty( $offers ) ) {
-		return null;
+	$grouped = array();
+
+	foreach ( $transient->updates as $update ) {
+		if ( ! is_object( $update ) || ! isset( $update->response, $update->current ) ) {
+			continue;
+		}
+
+		if ( ! in_array( $update->response, array( 'upgrade', 'autoupdate' ), true ) ) {
+			continue; // Skip 'latest' (no-op), 'development', etc.
+		}
+
+		$key = $update->response . '|' . $update->current;
+
+		if ( ! isset( $grouped[ $key ] ) ) {
+			$grouped[ $key ] = array();
+		}
+
+		$grouped[ $key ][] = $update;
 	}
 
 	$preferred_locale = get_locale();
+	$offers           = array();
 
-	foreach ( $offers as $offer ) {
-		if ( isset( $offer->locale ) && $preferred_locale === $offer->locale ) {
-			return $offer;
+	foreach ( $grouped as $variants ) {
+		$offers[] = nb_mcp_bridge_pick_locale_variant( $variants, $preferred_locale );
+	}
+
+	return $offers;
+}
+
+/**
+ * From several locale variants of the same (response, target version)
+ * offer, pick the site's own locale, then en_US, then whatever is left.
+ *
+ * @param object[] $variants
+ * @return object
+ */
+function nb_mcp_bridge_pick_locale_variant( $variants, $preferred_locale ) {
+	foreach ( $variants as $variant ) {
+		if ( isset( $variant->locale ) && $preferred_locale === $variant->locale ) {
+			return $variant;
 		}
 	}
 
-	foreach ( $offers as $offer ) {
-		if ( isset( $offer->locale ) && 'en_US' === $offer->locale ) {
-			return $offer;
+	foreach ( $variants as $variant ) {
+		if ( isset( $variant->locale ) && 'en_US' === $variant->locale ) {
+			return $variant;
 		}
 	}
 
-	return $offers[0];
+	return $variants[0];
+}
+
+/**
+ * Highest-versioned offer among a non-empty list, by target version.
+ *
+ * @param object[] $offers
+ * @return object
+ */
+function nb_mcp_bridge_highest_offer( $offers ) {
+	usort(
+		$offers,
+		static function ( $a, $b ) {
+			return version_compare( $a->current, $b->current );
+		}
+	);
+
+	return end( $offers );
+}
+
+/**
+ * Pick the core update offer to install for POST /updates/core.
+ *
+ * When $allow_major is false, only offers in the installed version's own
+ * x.y branch (minor/security releases — typically 'autoupdate' responses,
+ * but an 'upgrade' can also land same-branch) are eligible, and the highest
+ * of those is returned. When $allow_major is true, the highest offer overall
+ * (any branch) is returned. Offers that are not actually newer than the
+ * installed version are ignored.
+ *
+ * @param bool $allow_major
+ * @return array{0: object|null, 1: object|null} [chosen offer or null,
+ *                                                 highest blocking
+ *                                                 major-branch offer if the
+ *                                                 caller should be told to
+ *                                                 pass allow_major, else
+ *                                                 null].
+ */
+function nb_mcp_bridge_select_core_update( $allow_major ) {
+	$installed   = get_bloginfo( 'version' );
+	$same_branch  = array();
+	$other_branch = array();
+
+	foreach ( nb_mcp_bridge_get_core_update_offers() as $offer ) {
+		if ( version_compare( $offer->current, $installed, '<=' ) ) {
+			continue; // Not actually newer than what's installed.
+		}
+
+		if ( nb_mcp_bridge_is_major_version_change( $installed, $offer->current ) ) {
+			$other_branch[] = $offer;
+		} else {
+			$same_branch[] = $offer;
+		}
+	}
+
+	if ( $allow_major ) {
+		$candidates = array_merge( $same_branch, $other_branch );
+
+		return empty( $candidates ) ? array( null, null ) : array( nb_mcp_bridge_highest_offer( $candidates ), null );
+	}
+
+	if ( ! empty( $same_branch ) ) {
+		return array( nb_mcp_bridge_highest_offer( $same_branch ), null );
+	}
+
+	$blocking = empty( $other_branch ) ? null : nb_mcp_bridge_highest_offer( $other_branch );
+
+	return array( null, $blocking );
 }
 
 /**
@@ -729,10 +835,24 @@ function nb_mcp_bridge_update_core( WP_REST_Request $request ) {
 
 	wp_version_check();
 
-	$from   = get_bloginfo( 'version' );
-	$update = nb_mcp_bridge_select_core_update();
+	$from = get_bloginfo( 'version' );
+
+	list( $update, $blocking_major ) = nb_mcp_bridge_select_core_update( $allow_major );
 
 	if ( ! $update ) {
+		if ( $blocking_major ) {
+			return new WP_Error(
+				'nb_mcp_major_update_blocked',
+				sprintf(
+					/* translators: 1: target version, 2: current version. */
+					__( 'Update to %1$s is a major version change from %2$s. Pass allow_major=true to proceed.', 'nb-mcp-bridge' ),
+					$blocking_major->current,
+					$from
+				),
+				array( 'status' => 409 )
+			);
+		}
+
 		return rest_ensure_response(
 			array(
 				'success' => false,
@@ -744,21 +864,9 @@ function nb_mcp_bridge_update_core( WP_REST_Request $request ) {
 	}
 
 	// $update->current is the offer's TARGET version (see
-	// nb_mcp_bridge_select_core_update() for why we don't use find_core_update()).
-	$to_version = isset( $update->current ) ? $update->current : '';
-
-	if ( ! $allow_major && nb_mcp_bridge_is_major_version_change( $from, $to_version ) ) {
-		return new WP_Error(
-			'nb_mcp_major_update_blocked',
-			sprintf(
-				/* translators: 1: target version, 2: current version. */
-				__( 'Update to %1$s is a major version change from %2$s. Pass allow_major=true to proceed.', 'nb-mcp-bridge' ),
-				$to_version,
-				$from
-			),
-			array( 'status' => 409 )
-		);
-	}
+	// nb_mcp_bridge_get_core_update_offers() for why we read the raw
+	// transient instead of get_core_updates()).
+	$to_version = $update->current;
 
 	$skin     = new WP_Ajax_Upgrader_Skin();
 	$upgrader = new Core_Upgrader( $skin );
