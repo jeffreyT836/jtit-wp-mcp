@@ -63,9 +63,13 @@ rather than being sent through the upgrader.
 `POST /updates/translations` does not trust the per-item result array of
 `Language_Pack_Upgrader::bulk_upgrade()`: `WP_Upgrader` carries the previous
 item's result over, so a failure after a success looks like a success. Instead
-the bridge records the pending packs (`type:slug:language`), runs the upgrade,
-forces a fresh update check and counts every pack that is *still pending* as
-failed. Response: `{success, count, failed, failed_items?, errors?, no_update?}`
+the bridge runs the upgrade and then checks every offered pack against the
+files on disk: a pack counts as installed only when the local translation's
+`PO-Revision-Date` is at least the pack's `updated` date (the same comparison
+WordPress uses). This does not depend on api.wordpress.org being reachable.
+Afterwards the update caches are refreshed so later `GET /updates` calls are
+current.
+Response: `{success, count, failed, failed_items?, errors?, no_update?}`
 — `success` is `true` only when `failed` is `0`; `failed_items` lists the
 packs still pending; `errors` holds the upgrader skin messages. With nothing
 pending the response is `{success: true, count: 0, failed: 0, no_update: true}`.

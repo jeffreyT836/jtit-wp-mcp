@@ -5,7 +5,7 @@
  * Description:       Companion mu-plugin for wp-fleet-mcp. Exposes REST endpoints
  *                     (namespace nb-mcp/v1) for status, update management and role
  *                     information that WordPress core REST does not provide.
- * Version:           1.0.4
+ * Version:           1.0.5
  * Requires at least: 6.0
  * Requires PHP:      7.4
  * Author:            wp-fleet-mcp
@@ -18,7 +18,7 @@
 defined( 'ABSPATH' ) || exit;
 
 // Reported by GET /nb-mcp/v1/status; keep in sync with the "Version" header above.
-define( 'NB_MCP_BRIDGE_VERSION', '1.0.4' );
+define( 'NB_MCP_BRIDGE_VERSION', '1.0.5' );
 
 /**
  * Register all nb-mcp/v1 REST routes.
@@ -915,6 +915,29 @@ function nb_mcp_bridge_translation_key( $update ) {
 }
 
 /**
+ * Whether the translation offered by a language pack update is now installed locally.
+ *
+ * Mirrors how WordPress decides a pack is outdated: the installed file's
+ * PO-Revision-Date is compared with the pack's `updated` timestamp.
+ *
+ * @param object $update Language pack update object from wp_get_translation_updates().
+ * @return bool
+ */
+function nb_mcp_bridge_translation_is_installed( $update ) {
+	$installed = wp_get_installed_translations( 'core' === $update->type ? 'core' : $update->type . 's' );
+	$domain    = 'core' === $update->type ? 'default' : $update->slug;
+
+	if ( empty( $installed[ $domain ][ $update->language ]['PO-Revision-Date'] ) ) {
+		return false;
+	}
+
+	$installed_at = strtotime( $installed[ $domain ][ $update->language ]['PO-Revision-Date'] );
+	$offered_at   = strtotime( $update->updated );
+
+	return false !== $installed_at && false !== $offered_at && $installed_at >= $offered_at;
+}
+
+/**
  * POST /nb-mcp/v1/updates/translations
  */
 function nb_mcp_bridge_update_translations() {
@@ -951,16 +974,25 @@ function nb_mcp_bridge_update_translations() {
 		);
 	}
 
-	$pending_keys = array_map( 'nb_mcp_bridge_translation_key', $updates );
-
 	$skin     = new WP_Ajax_Upgrader_Skin();
 	$upgrader = new Language_Pack_Upgrader( $skin );
 	$result   = $upgrader->bulk_upgrade( $updates );
 
 	// The per-item array returned by bulk_upgrade() is not trustworthy: WP_Upgrader
 	// keeps $this->result from the previous item, so a failure that follows a success
-	// is reported as a success. Instead, derive the outcome from the source of truth:
-	// force a fresh update check and see which of the requested packs are still pending.
+	// is reported as a success. A network re-check is not trustworthy either (an
+	// api.wordpress.org outage would make every pack look "no longer pending").
+	// Decide from local files: a pack is installed only when the translation on disk
+	// is at least as new as the pack that was offered.
+	$still_pending = array();
+	foreach ( $updates as $update ) {
+		if ( ! nb_mcp_bridge_translation_is_installed( $update ) ) {
+			$still_pending[] = nb_mcp_bridge_translation_key( $update );
+		}
+	}
+
+	// Refresh the update caches so later GET /updates calls reflect reality; the
+	// outcome above does not depend on this succeeding.
 	foreach ( array( 'update_core', 'update_plugins', 'update_themes' ) as $transient ) {
 		delete_site_transient( $transient );
 	}
@@ -968,13 +1000,8 @@ function nb_mcp_bridge_update_translations() {
 	wp_update_plugins();
 	wp_update_themes();
 
-	$still_pending = array_intersect(
-		$pending_keys,
-		array_map( 'nb_mcp_bridge_translation_key', wp_get_translation_updates() )
-	);
-
 	$failed    = count( $still_pending );
-	$succeeded = count( $pending_keys ) - $failed;
+	$succeeded = count( $updates ) - $failed;
 	$errors    = array();
 
 	if ( is_wp_error( $result ) ) {
