@@ -151,12 +151,14 @@ describe('tools/fleet', () => {
     expect(data.results[0].users).toEqual([{ id: 1, username: 'alice', email: 'Alice@Example.com', roles: ['administrator'] }]);
   });
 
-  it('fleet_update_plugin dry-runs by default across the fleet', async () => {
+  it('fleet_update_plugin dry-runs by default across the fleet, resolving targets with a fresh refresh', async () => {
     const siteA = makeSite({ id: 'a' });
     const siteB = makeSite({ id: 'b' });
+    const seenUrls: string[] = [];
     harness = await createHarness({
       sites: [siteA, siteB],
       fetch: createMockFetch((url) => {
+        seenUrls.push(url);
         if (url.includes('a.example.com')) {
           return jsonResponse({ plugins: [{ plugin: 'akismet/akismet.php', current_version: '5.3', new_version: '5.4' }] });
         }
@@ -168,6 +170,9 @@ describe('tools/fleet', () => {
     const data = JSON.parse(textOf(result));
     expect(data.dryRun).toBe(true);
     expect(data.summary).toMatchObject({ wouldUpdate: 1, noUpdateAvailable: 1, failed: 0 });
+    const siteBResult = data.results.find((r: { site: string }) => r.site === 'b');
+    expect(siteBResult.data).toEqual({ status: 'up_to_date' });
+    expect(seenUrls.every((u) => u.includes('refresh=1'))).toBe(true);
   });
 
   it('fleet_update_plugin confirmed: updates a writable site, skips a readOnly site, and reports both', async () => {

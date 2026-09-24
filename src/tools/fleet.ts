@@ -275,11 +275,14 @@ export function register(server: McpServer, ctx: ToolContext): void {
             targets,
             async (site) => {
               const client = ctx.registry.client(site.id);
-              const updates = await fetchBridgeUpdates(client);
+              // Refresh, not cached: after any bridge update WP clears its update
+              // transients, so a cached /updates list would show a just-confirmed update
+              // as no longer available.
+              const updates = await fetchBridgeUpdates(client, true);
               const info = (updates.plugins ?? []).find((p) => stripPhp(p.plugin) === route);
 
               if (!info) {
-                return { status: 'no_update_available' as const };
+                return { status: 'up_to_date' as const };
               }
               if (!confirmed) {
                 return { status: 'dry_run' as const, from: info.current_version, to: info.new_version };
@@ -374,7 +377,7 @@ export function register(server: McpServer, ctx: ToolContext): void {
                 case 'skipped_read_only':
                   acc.skippedReadOnly += 1;
                   break;
-                case 'no_update_available':
+                case 'up_to_date':
                   acc.noUpdateAvailable += 1;
                   break;
                 case 'failed':

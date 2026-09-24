@@ -23,10 +23,14 @@ export interface BridgeUpdatesTheme {
 }
 
 export interface BridgeUpdatesCore {
+  /** Installed version (same for every entry). */
   current?: string;
+  /** The offer's target version. */
   version?: string;
   response?: string;
   locale?: string;
+  /** Whether the offer is a same-branch minor/security release or a major (x.y) bump. */
+  type?: 'minor' | 'major';
 }
 
 export interface BridgeUpdates {
@@ -62,7 +66,9 @@ async function resolvePluginUpdateTargets(
   if (!args.all && (!args.plugins || args.plugins.length === 0)) {
     throw new Error('update_plugins requires either a non-empty "plugins" array or "all: true"');
   }
-  const updates = await fetchBridgeUpdates(client);
+  // Refresh, not cached: after any bridge update WP clears its update transients, so a
+  // cached /updates list would show a just-confirmed update as no longer available.
+  const updates = await fetchBridgeUpdates(client, true);
   const byRoute = new Map((updates.plugins ?? []).map((p) => [stripPhp(p.plugin), p]));
 
   if (args.all) {
@@ -105,7 +111,9 @@ async function resolveThemeUpdateTargets(
   if (!args.all && (!args.themes || args.themes.length === 0)) {
     throw new Error('update_themes requires either a non-empty "themes" array or "all: true"');
   }
-  const updates = await fetchBridgeUpdates(client);
+  // Refresh, not cached: after any bridge update WP clears its update transients, so a
+  // cached /updates list would show a just-confirmed update as no longer available.
+  const updates = await fetchBridgeUpdates(client, true);
   const byStylesheet = new Map((updates.themes ?? []).map((t) => [t.stylesheet, t]));
 
   if (args.all) {
@@ -133,10 +141,76 @@ async function resolveThemeUpdateTargets(
   return { files, preview, noUpdateAvailable };
 }
 
-/** Checks for a pending core upgrade via a *fresh* (non-cached) bridge update check. */
-async function resolveCoreUpdate(client: WpClient): Promise<BridgeUpdatesCore | undefined> {
+/**
+ * Compares two dotted version strings numerically, per segment (e.g. "7.0.10" > "7.0.9",
+ * unlike a lexicographic string compare). Missing/non-numeric segments count as 0.
+ */
+export function compareVersions(a: string, b: string): number {
+  const as = a.split('.').map((n) => Number.parseInt(n, 10) || 0);
+  const bs = b.split('.').map((n) => Number.parseInt(n, 10) || 0);
+  const len = Math.max(as.length, bs.length);
+  for (let i = 0; i < len; i++) {
+    const diff = (as[i] ?? 0) - (bs[i] ?? 0);
+    if (diff !== 0) return diff > 0 ? 1 : -1;
+  }
+  return 0;
+}
+
+function highestOffer(offers: BridgeUpdatesCore[]): BridgeUpdatesCore {
+  return offers.reduce((best, offer) =>
+    compareVersions(offer.version ?? '', best.version ?? '') > 0 ? offer : best,
+  );
+}
+
+export interface CoreUpdateSelection {
+  /** The offer to install, per the bridge's own selection rules. */
+  chosen?: BridgeUpdatesCore;
+  /** Set when `allow_major` is false and only a major-branch offer is available — the
+   *  caller should be told a confirmed run would be refused unless they pass allow_major. */
+  blockingMajor?: BridgeUpdatesCore;
+}
+
+/**
+ * Mirrors `nb_mcp_bridge_select_core_update()` exactly (see wordpress/nb-mcp-bridge/
+ * nb-mcp-bridge.php and SPEC.md §5): with `allowMajor` false, only same-branch
+ * (`type !== 'major'`) offers are eligible and the highest of those (by target `version`)
+ * is chosen; with `allowMajor` true, the highest offer overall is chosen. Offers whose
+ * target `version` is not actually newer than the installed `current` are ignored.
+ */
+export function selectCoreUpdate(offers: BridgeUpdatesCore[], allowMajor: boolean): CoreUpdateSelection {
+  const eligible = offers.filter(
+    (o) => !!o.version && !!o.current && compareVersions(o.version, o.current) > 0,
+  );
+  const sameBranch = eligible.filter((o) => o.type !== 'major');
+  const otherBranch = eligible.filter((o) => o.type === 'major');
+
+  if (allowMajor) {
+    const candidates = [...sameBranch, ...otherBranch];
+    return candidates.length > 0 ? { chosen: highestOffer(candidates) } : {};
+  }
+
+  if (sameBranch.length > 0) {
+    return { chosen: highestOffer(sameBranch) };
+  }
+  return otherBranch.length > 0 ? { blockingMajor: highestOffer(otherBranch) } : {};
+}
+
+/** Resolves the core update the bridge would install, via a *fresh* (non-cached) update check. */
+async function resolveCoreUpdate(client: WpClient, allowMajor: boolean): Promise<CoreUpdateSelection> {
   const updates = await fetchBridgeUpdates(client, true);
-  return (updates.core ?? []).find((c) => c.response === 'upgrade');
+  return selectCoreUpdate(updates.core ?? [], allowMajor);
+}
+
+/** True when a bridge `/updates/core` or `/updates/translations` response means "nothing to do", not a failure. */
+function isCoreNoUpdate(data: { success?: boolean; from?: string; to?: string; error?: string; no_update?: boolean }): boolean {
+  if (data.no_update === true) return true;
+  return (
+    data.success === false &&
+    typeof data.from === 'string' &&
+    data.from === data.to &&
+    !!data.error &&
+    /no core update/i.test(data.error)
+  );
 }
 
 /** Summarizes per-item bridge failures for the audit log, e.g. "1/2 plugin update(s) failed: akismet/akismet: checksum mismatch". */
@@ -199,8 +273,13 @@ export function register(server: McpServer, ctx: ToolContext): void {
       };
     },
     execute: async (args, _site, client) => {
-      const { files } = await resolvePluginUpdateTargets(args, client);
+      const { files, noUpdateAvailable } = await resolvePluginUpdateTargets(args, client);
       if (files.length === 0) {
+        // Every explicitly requested plugin has no pending update (now confirmed fresh via
+        // refresh:true) — a truthful, non-error outcome, not a silent no-op.
+        if (noUpdateAvailable.length > 0) {
+          return { status: 'up_to_date' as const, noUpdateAvailable };
+        }
         return { updated: false, message: 'no plugin updates available', results: [] };
       }
       const data = await client.bridge<{ results?: Array<{ plugin: string; success: boolean; error?: string }> }>(
@@ -249,8 +328,13 @@ export function register(server: McpServer, ctx: ToolContext): void {
       };
     },
     execute: async (args, _site, client) => {
-      const { files } = await resolveThemeUpdateTargets(args, client);
+      const { files, noUpdateAvailable } = await resolveThemeUpdateTargets(args, client);
       if (files.length === 0) {
+        // Every explicitly requested theme has no pending update (now confirmed fresh via
+        // refresh:true) — a truthful, non-error outcome, not a silent no-op.
+        if (noUpdateAvailable.length > 0) {
+          return { status: 'up_to_date' as const, noUpdateAvailable };
+        }
         return { updated: false, message: 'no theme updates available', results: [] };
       }
       const data = await client.bridge<{ results?: Array<{ theme: string; success: boolean; error?: string }> }>(
@@ -286,24 +370,44 @@ export function register(server: McpServer, ctx: ToolContext): void {
     },
     annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: true },
     wouldDo: async (args, site, client) => {
-      const core = await resolveCoreUpdate(client);
-      return core
-        ? {
-            action: 'update_core',
-            site: site.id,
-            from: core.current,
-            to: core.version,
-            allow_major: args.allow_major ?? false,
-          }
-        : { action: 'update_core', site: site.id, message: 'core is already up to date' };
+      const allowMajor = args.allow_major ?? false;
+      const { chosen, blockingMajor } = await resolveCoreUpdate(client, allowMajor);
+      if (chosen) {
+        return {
+          action: 'update_core',
+          site: site.id,
+          from: chosen.current,
+          to: chosen.version,
+          allow_major: allowMajor,
+        };
+      }
+      if (blockingMajor) {
+        return {
+          action: 'update_core',
+          site: site.id,
+          message: `update to ${blockingMajor.version} is a major version change from ${blockingMajor.current}; would be refused — pass allow_major:true to allow it`,
+          blocked_major: { from: blockingMajor.current, to: blockingMajor.version },
+        };
+      }
+      return { action: 'update_core', site: site.id, message: 'core is already up to date' };
     },
     execute: async (args, _site, client) => {
       // Always ask the bridge, even if the last (now-refreshed) check showed nothing to do —
       // the bridge itself has the freshest view and is the source of truth for "up to date".
-      const data = await client.bridge<{ success?: boolean; from?: string; to?: string; error?: string }>(
-        '/updates/core',
-        { method: 'POST', body: { allow_major: args.allow_major ?? false }, timeoutMs: ctx.env.WP_UPDATE_TIMEOUT_MS },
-      );
+      const data = await client.bridge<{
+        success?: boolean;
+        from?: string;
+        to?: string;
+        error?: string;
+        no_update?: boolean;
+      }>('/updates/core', {
+        method: 'POST',
+        body: { allow_major: args.allow_major ?? false },
+        timeoutMs: ctx.env.WP_UPDATE_TIMEOUT_MS,
+      });
+      if (isCoreNoUpdate(data)) {
+        return { status: 'up_to_date' as const, from: data.from, to: data.to };
+      }
       if (data && data.success === false) {
         return writeOutcome(data, { failed: 1, total: 1, errorSummary: data.error ?? 'core update failed' });
       }
@@ -323,10 +427,13 @@ export function register(server: McpServer, ctx: ToolContext): void {
     annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: true },
     wouldDo: (args) => ({ action: 'update_translations', site: args.site }),
     execute: async (_args, _site, client) => {
-      const data = await client.bridge<{ success?: boolean; count?: number; error?: string }>('/updates/translations', {
-        method: 'POST',
-        timeoutMs: ctx.env.WP_UPDATE_TIMEOUT_MS,
-      });
+      const data = await client.bridge<{ success?: boolean; count?: number; error?: string; no_update?: boolean }>(
+        '/updates/translations',
+        { method: 'POST', timeoutMs: ctx.env.WP_UPDATE_TIMEOUT_MS },
+      );
+      if (data.no_update === true || data.count === 0) {
+        return { status: 'up_to_date' as const, count: data.count ?? 0 };
+      }
       if (data && data.success === false) {
         return writeOutcome(data, { failed: 1, total: 1, errorSummary: data.error ?? 'translations update failed' });
       }

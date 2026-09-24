@@ -7,7 +7,7 @@ function textOf(result: Awaited<ReturnType<Harness['client']['callTool']>>): str
 
 const sampleUpdates = {
   checked_at: '2026-01-01T00:00:00Z',
-  core: [{ current: '6.4', version: '6.5', response: 'upgrade', locale: 'en_US' }],
+  core: [{ current: '6.4', version: '6.5', response: 'upgrade', locale: 'en_US', type: 'minor' }],
   plugins: [
     { plugin: 'akismet/akismet.php', name: 'Akismet', current_version: '5.3', new_version: '5.4' },
     { plugin: 'jetpack/jetpack.php', name: 'Jetpack', current_version: '12.0', new_version: '12.1' },
@@ -89,12 +89,14 @@ describe('tools/updates', () => {
       },
     });
     expect(calls.every((c) => c.method === undefined || c.method === 'GET')).toBe(true);
+    expect(calls.some((c) => c.url.includes('refresh=1'))).toBe(true);
   });
 
-  it('update_plugins confirmed with all:true posts every plugin file with the update timeout', async () => {
+  it('update_plugins confirmed with all:true posts every plugin file with the update timeout, resolving targets with a fresh refresh', async () => {
     const site = makeSite({ id: 'acme' });
     let sawBody: unknown;
     let sawTimeoutRespected = false;
+    let sawGetUrl = '';
     harness = await createHarness({
       sites: [site],
       env: { WP_UPDATE_TIMEOUT_MS: 12345 },
@@ -104,6 +106,7 @@ describe('tools/updates', () => {
           sawTimeoutRespected = true;
           return jsonResponse({ results: [{ plugin: 'akismet/akismet.php', success: true, from: '5.3', to: '5.4' }] });
         }
+        sawGetUrl = url;
         return jsonResponse(sampleUpdates);
       }),
     });
@@ -115,6 +118,7 @@ describe('tools/updates', () => {
     expect(result.isError).toBeUndefined();
     expect(sawBody).toEqual({ plugins: ['akismet/akismet.php', 'jetpack/jetpack.php'] });
     expect(sawTimeoutRespected).toBe(true);
+    expect(sawGetUrl).toContain('refresh=1');
     expect(harness.auditEntries).toHaveLength(1);
     expect(harness.auditEntries[0]).toMatchObject({ tool: 'update_plugins', ok: true });
   });
@@ -137,7 +141,7 @@ describe('tools/updates', () => {
     });
   });
 
-  it('update_plugins with only no-update entries posts nothing when confirmed', async () => {
+  it('update_plugins with only no-update entries posts nothing when confirmed, and returns a non-error up_to_date result audited ok:true', async () => {
     const site = makeSite({ id: 'acme' });
     let posted = false;
     harness = await createHarness({
@@ -153,7 +157,12 @@ describe('tools/updates', () => {
     });
     expect(result.isError).toBeUndefined();
     expect(posted).toBe(false);
-    expect(JSON.parse(textOf(result))).toMatchObject({ updated: false });
+    expect(JSON.parse(textOf(result))).toEqual({
+      status: 'up_to_date',
+      noUpdateAvailable: [{ plugin: 'hello-dolly/hello', status: 'no_update_available' }],
+    });
+    expect(harness.auditEntries).toHaveLength(1);
+    expect(harness.auditEntries[0]).toMatchObject({ tool: 'update_plugins', ok: true });
   });
 
   it('update_plugins audits ok:false (but not isError) on a partial per-item failure, and isError on a total failure', async () => {
@@ -268,16 +277,18 @@ describe('tools/updates', () => {
     expect(harness.auditEntries[0]).toMatchObject({ ok: false });
   });
 
-  it('update_themes previews and posts stylesheet slugs', async () => {
+  it('update_themes previews and posts stylesheet slugs, resolving targets with a fresh refresh', async () => {
     const site = makeSite({ id: 'acme' });
     let sawBody: unknown;
+    const getUrls: string[] = [];
     harness = await createHarness({
       sites: [site],
-      fetch: createMockFetch((_url, init) => {
+      fetch: createMockFetch((url, init) => {
         if (init?.method === 'POST') {
           sawBody = init.body ? JSON.parse(init.body as string) : undefined;
           return jsonResponse({ results: [{ theme: 'twentytwentyfour', success: true }] });
         }
+        getUrls.push(url);
         return jsonResponse(sampleUpdates);
       }),
     });
@@ -289,6 +300,7 @@ describe('tools/updates', () => {
 
     await harness.client.callTool({ name: 'update_themes', arguments: { site: 'acme', all: true, confirm: true } });
     expect(sawBody).toEqual({ themes: ['twentytwentyfour'] });
+    expect(getUrls.every((u) => u.includes('refresh=1'))).toBe(true);
   });
 
   it('update_themes requires themes or all, and validates theme ids', async () => {
@@ -356,6 +368,30 @@ describe('tools/updates', () => {
         no_update_available: [{ theme: 'twentytwentythree', status: 'no_update_available' }],
       },
     });
+  });
+
+  it('update_themes with only no-update entries posts nothing when confirmed, and returns a non-error up_to_date result audited ok:true', async () => {
+    const site = makeSite({ id: 'acme' });
+    let posted = false;
+    harness = await createHarness({
+      sites: [site],
+      fetch: createMockFetch((_url, init) => {
+        if (init?.method === 'POST') posted = true;
+        return jsonResponse(sampleUpdates);
+      }),
+    });
+    const result = await harness.client.callTool({
+      name: 'update_themes',
+      arguments: { site: 'acme', themes: ['twentytwentythree'], confirm: true },
+    });
+    expect(result.isError).toBeUndefined();
+    expect(posted).toBe(false);
+    expect(JSON.parse(textOf(result))).toEqual({
+      status: 'up_to_date',
+      noUpdateAvailable: [{ theme: 'twentytwentythree', status: 'no_update_available' }],
+    });
+    expect(harness.auditEntries).toHaveLength(1);
+    expect(harness.auditEntries[0]).toMatchObject({ tool: 'update_themes', ok: true });
   });
 
   it('update_themes audits ok:false without isError on a partial per-item failure', async () => {
@@ -445,6 +481,100 @@ describe('tools/updates', () => {
     expect(JSON.parse(textOf(result))).toEqual({ success: true, from: '6.5', to: '6.5' });
   });
 
+  it('update_core preview picks the highest minor offer by numeric version, ignoring a major offer, when allow_major is false', async () => {
+    const site = makeSite({ id: 'acme' });
+    harness = await createHarness({
+      sites: [site],
+      fetch: createMockFetch(() =>
+        jsonResponse({
+          core: [
+            { current: '7.0', version: '7.0.9', response: 'autoupdate', locale: 'en_US', type: 'minor' },
+            { current: '7.0', version: '7.0.10', response: 'autoupdate', locale: 'en_US', type: 'minor' },
+            { current: '7.0', version: '8.0', response: 'upgrade', locale: 'en_US', type: 'major' },
+          ],
+        }),
+      ),
+    });
+    const dryRun = await harness.client.callTool({ name: 'update_core', arguments: { site: 'acme' } });
+    expect(JSON.parse(textOf(dryRun))).toEqual({
+      dryRun: true,
+      wouldDo: { action: 'update_core', site: 'acme', from: '7.0', to: '7.0.10', allow_major: false },
+    });
+  });
+
+  it('update_core preview reports the major update would be refused (pass allow_major) when only a major offer exists', async () => {
+    const site = makeSite({ id: 'acme' });
+    harness = await createHarness({
+      sites: [site],
+      fetch: createMockFetch(() =>
+        jsonResponse({
+          core: [{ current: '7.0', version: '8.0', response: 'upgrade', locale: 'en_US', type: 'major' }],
+        }),
+      ),
+    });
+    const dryRun = await harness.client.callTool({ name: 'update_core', arguments: { site: 'acme' } });
+    const parsed = JSON.parse(textOf(dryRun));
+    expect(parsed.dryRun).toBe(true);
+    expect(parsed.wouldDo.action).toBe('update_core');
+    expect(parsed.wouldDo.blocked_major).toEqual({ from: '7.0', to: '8.0' });
+    expect(parsed.wouldDo.message).toMatch(/allow_major/);
+  });
+
+  it('update_core preview with allow_major:true picks the highest offer overall, including a major', async () => {
+    const site = makeSite({ id: 'acme' });
+    harness = await createHarness({
+      sites: [site],
+      fetch: createMockFetch(() =>
+        jsonResponse({
+          core: [
+            { current: '7.0', version: '7.0.10', response: 'autoupdate', locale: 'en_US', type: 'minor' },
+            { current: '7.0', version: '8.0', response: 'upgrade', locale: 'en_US', type: 'major' },
+          ],
+        }),
+      ),
+    });
+    const dryRun = await harness.client.callTool({ name: 'update_core', arguments: { site: 'acme', allow_major: true } });
+    expect(JSON.parse(textOf(dryRun))).toEqual({
+      dryRun: true,
+      wouldDo: { action: 'update_core', site: 'acme', from: '7.0', to: '8.0', allow_major: true },
+    });
+  });
+
+  it('update_core confirmed on an up-to-date site returns a non-error up_to_date result audited ok:true when the bridge reports no_update:true', async () => {
+    const site = makeSite({ id: 'acme' });
+    harness = await createHarness({
+      sites: [site],
+      fetch: createMockFetch((_url, init) => {
+        if (init?.method === 'POST') {
+          return jsonResponse({ success: false, from: '7.0', to: '7.0', error: 'No core update is available.', no_update: true });
+        }
+        return jsonResponse(sampleUpdates);
+      }),
+    });
+    const result = await harness.client.callTool({ name: 'update_core', arguments: { site: 'acme', confirm: true } });
+    expect(result.isError).toBeUndefined();
+    expect(JSON.parse(textOf(result))).toEqual({ status: 'up_to_date', from: '7.0', to: '7.0' });
+    expect(harness.auditEntries).toHaveLength(1);
+    expect(harness.auditEntries[0]).toMatchObject({ tool: 'update_core', ok: true });
+  });
+
+  it('update_core confirmed on an up-to-date site returns up_to_date from success:false + from===to + a "no core update" error, without no_update flag', async () => {
+    const site = makeSite({ id: 'acme' });
+    harness = await createHarness({
+      sites: [site],
+      fetch: createMockFetch((_url, init) => {
+        if (init?.method === 'POST') {
+          return jsonResponse({ success: false, from: '7.0', to: '7.0', error: 'No core update is available.' });
+        }
+        return jsonResponse(sampleUpdates);
+      }),
+    });
+    const result = await harness.client.callTool({ name: 'update_core', arguments: { site: 'acme', confirm: true } });
+    expect(result.isError).toBeUndefined();
+    expect(JSON.parse(textOf(result))).toEqual({ status: 'up_to_date', from: '7.0', to: '7.0' });
+    expect(harness.auditEntries[0]).toMatchObject({ tool: 'update_core', ok: true });
+  });
+
   it('update_core audits ok:false and sets isError when the bridge reports success:false', async () => {
     const site = makeSite({ id: 'acme' });
     harness = await createHarness({
@@ -498,6 +628,42 @@ describe('tools/updates', () => {
     });
     expect(result.isError).toBe(true);
     expect(harness.auditEntries[0]).toMatchObject({ tool: 'update_translations', ok: false, error: 'network unreachable' });
+  });
+
+  it('update_translations confirmed with count:0 returns a non-error up_to_date result audited ok:true', async () => {
+    const site = makeSite({ id: 'acme' });
+    harness = await createHarness({
+      sites: [site],
+      fetch: createMockFetch((_url, init) => {
+        if (init?.method === 'POST') return jsonResponse({ success: true, count: 0 });
+        return jsonResponse(sampleUpdates);
+      }),
+    });
+    const result = await harness.client.callTool({
+      name: 'update_translations',
+      arguments: { site: 'acme', confirm: true },
+    });
+    expect(result.isError).toBeUndefined();
+    expect(JSON.parse(textOf(result))).toEqual({ status: 'up_to_date', count: 0 });
+    expect(harness.auditEntries[0]).toMatchObject({ tool: 'update_translations', ok: true });
+  });
+
+  it('update_translations confirmed with no_update:true returns a non-error up_to_date result audited ok:true', async () => {
+    const site = makeSite({ id: 'acme' });
+    harness = await createHarness({
+      sites: [site],
+      fetch: createMockFetch((_url, init) => {
+        if (init?.method === 'POST') return jsonResponse({ success: true, count: 0, no_update: true });
+        return jsonResponse(sampleUpdates);
+      }),
+    });
+    const result = await harness.client.callTool({
+      name: 'update_translations',
+      arguments: { site: 'acme', confirm: true },
+    });
+    expect(result.isError).toBeUndefined();
+    expect(JSON.parse(textOf(result))).toEqual({ status: 'up_to_date', count: 0 });
+    expect(harness.auditEntries[0]).toMatchObject({ tool: 'update_translations', ok: true });
   });
 
   it('MCP_READ_ONLY hides every update write tool but keeps list_updates', async () => {
