@@ -1,10 +1,8 @@
 import { z } from 'zod';
-import type { McpServer, ToolCallback } from '@modelcontextprotocol/sdk/server/mcp.js';
-import type { ShapeOutput, ZodRawShapeCompat } from '@modelcontextprotocol/sdk/server/zod-compat.js';
-import type { ResolvedSite } from '../config/schema.js';
+import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { WpClient } from '../wp/client.js';
 import type { ToolContext } from './context.js';
-import { errorResult, jsonResult, registerWriteTool, requireWritable } from './helpers.js';
+import { errorResult, jsonResult, registerWriteTool } from './helpers.js';
 import { validatePluginId } from './plugins.js';
 import { validateThemeId } from './themes.js';
 
@@ -120,70 +118,6 @@ async function resolveCoreUpdate(client: WpClient): Promise<BridgeUpdatesCore | 
   return (updates.core ?? []).find((c) => c.response === 'upgrade');
 }
 
-interface AsyncWriteToolConfig<Shape extends ZodRawShapeCompat> {
-  name: string;
-  title: string;
-  description: string;
-  inputSchema: Shape;
-  annotations?: Record<string, unknown>;
-  /** May call the bridge (e.g. to fetch current update info) to build an accurate preview. */
-  wouldDo: (args: ShapeOutput<Shape>, site: ResolvedSite, client: WpClient) => Promise<unknown>;
-  execute: (args: ShapeOutput<Shape>, site: ResolvedSite, client: WpClient) => Promise<unknown>;
-}
-
-/**
- * A write-tool registrar with the same MCP_READ_ONLY / confirm / per-site readOnly / audit
- * guarantees as {@link registerWriteTool}, but whose `wouldDo` may be async. The update
- * tools need to call the bridge (`GET /updates`) to build an accurate `{plugin, from, to}`
- * dry-run preview, which `registerWriteTool`'s synchronous `wouldDo` cannot support.
- */
-function registerAsyncWriteTool<Shape extends ZodRawShapeCompat>(
-  server: McpServer,
-  ctx: ToolContext,
-  config: AsyncWriteToolConfig<Shape>,
-): void {
-  if (ctx.readOnlyGlobal) return;
-
-  const handler: ToolCallback<Shape> = (async (args: ShapeOutput<Shape>) => {
-      const siteId = String((args as Record<string, unknown>).site ?? '');
-      const confirmed = (args as Record<string, unknown>).confirm === true;
-      try {
-        const site = ctx.registry.get(siteId);
-        const client = ctx.registry.client(siteId);
-        if (!confirmed) {
-          const wouldDo = await config.wouldDo(args, site, client);
-          return jsonResult({ dryRun: true, wouldDo });
-        }
-        requireWritable(site);
-        const data = await config.execute(args, site, client);
-        ctx.audit.log({ tool: config.name, site: siteId, args, ok: true });
-        return jsonResult(data);
-      } catch (err) {
-        if (confirmed) {
-          ctx.audit.log({
-            tool: config.name,
-            site: siteId,
-            args,
-            ok: false,
-            error: err instanceof Error ? err.message : String(err),
-          });
-        }
-        return errorResult(err);
-      }
-    }) as unknown as ToolCallback<Shape>;
-
-  server.registerTool(
-    config.name,
-    {
-      title: config.title,
-      description: config.description,
-      inputSchema: config.inputSchema,
-      annotations: { readOnlyHint: false, ...config.annotations },
-    },
-    handler,
-  );
-}
-
 /** Registers `list_updates`, `update_plugins`, `update_themes`, `update_core`, `update_translations`. See SPEC.md §4/§5. */
 export function register(server: McpServer, ctx: ToolContext): void {
   server.registerTool(
@@ -209,7 +143,7 @@ export function register(server: McpServer, ctx: ToolContext): void {
     },
   );
 
-  registerAsyncWriteTool(server, ctx, {
+  registerWriteTool(server, ctx, {
     name: 'update_plugins',
     title: 'Update plugins',
     description:
@@ -243,7 +177,7 @@ export function register(server: McpServer, ctx: ToolContext): void {
     },
   });
 
-  registerAsyncWriteTool(server, ctx, {
+  registerWriteTool(server, ctx, {
     name: 'update_themes',
     title: 'Update themes',
     description:
@@ -274,7 +208,7 @@ export function register(server: McpServer, ctx: ToolContext): void {
     },
   });
 
-  registerAsyncWriteTool(server, ctx, {
+  registerWriteTool(server, ctx, {
     name: 'update_core',
     title: 'Update WordPress core',
     description:

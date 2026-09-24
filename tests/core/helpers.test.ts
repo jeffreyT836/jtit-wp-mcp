@@ -39,6 +39,7 @@ async function buildWriteToolHarness(options: {
   sites: ResolvedSite[];
   fetch?: FetchLike;
   readOnlyGlobal?: boolean;
+  wouldDo?: (args: { site: string; confirm?: boolean }, site: ResolvedSite, client: unknown) => unknown;
   execute?: (args: { site: string; confirm?: boolean }, site: ResolvedSite, client: unknown) => Promise<unknown>;
 }) {
   const registry = new SiteRegistry(options.sites, { fetch: options.fetch });
@@ -67,7 +68,8 @@ async function buildWriteToolHarness(options: {
     title: 'Noop write',
     description: 'test write tool',
     inputSchema: { site: z.string(), confirm: z.boolean().optional() },
-    wouldDo: (args) => ({ action: 'noop', site: args.site }),
+    wouldDo: (args, site, client) =>
+      options.wouldDo ? options.wouldDo(args, site, client) : { action: 'noop', site: args.site },
     execute: async (args, site, client) => {
       executed = true;
       if (options.execute) return options.execute(args, site, client);
@@ -263,6 +265,97 @@ describe('registerWriteTool', () => {
       expect(result.isError).toBeUndefined();
       expect(harness.auditEntries).toHaveLength(1);
       expect(harness.auditEntries[0]).toMatchObject({ tool: 'noop_write', site: 's1', ok: true });
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('supports an async wouldDo and awaits it for the dry-run preview', async () => {
+    const site = makeSite({ id: 's1' });
+    const harness = await buildWriteToolHarness({
+      sites: [site],
+      wouldDo: async (args) => {
+        await new Promise((resolve) => setTimeout(resolve, 1));
+        return { action: 'noop', site: args.site, fetched: true };
+      },
+    });
+    try {
+      const result = await harness.client.callTool({ name: 'noop_write', arguments: { site: 's1' } });
+      const text = (result.content as Array<{ type: string; text: string }>)[0]!.text;
+
+      expect(harness.wasExecuted()).toBe(false);
+      expect(JSON.parse(text)).toEqual({ dryRun: true, wouldDo: { action: 'noop', site: 's1', fetched: true } });
+      expect(harness.auditEntries).toHaveLength(0);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('returns an errorResult and does not audit when wouldDo throws (unconfirmed)', async () => {
+    const site = makeSite({ id: 's1' });
+    const harness = await buildWriteToolHarness({
+      sites: [site],
+      wouldDo: () => {
+        throw new Error('refusing: self-lockout guard tripped');
+      },
+    });
+    try {
+      const result = await harness.client.callTool({ name: 'noop_write', arguments: { site: 's1' } });
+      const text = (result.content as Array<{ type: string; text: string }>)[0]!.text;
+
+      expect(harness.wasExecuted()).toBe(false);
+      expect(result.isError).toBe(true);
+      expect(text).toMatch(/self-lockout guard tripped/);
+      expect(harness.auditEntries).toHaveLength(0);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('returns an errorResult and does not audit when an async wouldDo rejects (unconfirmed)', async () => {
+    const site = makeSite({ id: 's1' });
+    const harness = await buildWriteToolHarness({
+      sites: [site],
+      wouldDo: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 1));
+        throw new Error('bridge route missing');
+      },
+    });
+    try {
+      const result = await harness.client.callTool({ name: 'noop_write', arguments: { site: 's1' } });
+      const text = (result.content as Array<{ type: string; text: string }>)[0]!.text;
+
+      expect(harness.wasExecuted()).toBe(false);
+      expect(result.isError).toBe(true);
+      expect(text).toMatch(/bridge route missing/);
+      expect(harness.auditEntries).toHaveLength(0);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('still audits a confirmed attempt that fails in execute, even though wouldDo is never called', async () => {
+    const site = makeSite({ id: 's1' });
+    let wouldDoCalled = false;
+    const harness = await buildWriteToolHarness({
+      sites: [site],
+      wouldDo: (args) => {
+        wouldDoCalled = true;
+        return { action: 'noop', site: args.site };
+      },
+      execute: async () => {
+        throw new Error('execute failed');
+      },
+    });
+    try {
+      const result = await harness.client.callTool({ name: 'noop_write', arguments: { site: 's1', confirm: true } });
+      const text = (result.content as Array<{ type: string; text: string }>)[0]!.text;
+
+      expect(wouldDoCalled).toBe(false);
+      expect(result.isError).toBe(true);
+      expect(text).toMatch(/execute failed/);
+      expect(harness.auditEntries).toHaveLength(1);
+      expect(harness.auditEntries[0]).toMatchObject({ tool: 'noop_write', site: 's1', ok: false });
     } finally {
       await harness.close();
     }

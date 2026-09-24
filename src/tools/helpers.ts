@@ -17,11 +17,20 @@
  * ### Write tools — use {@link registerWriteTool}
  * `registerWriteTool` is a single entry point that gives every write tool, for free:
  * - it is not registered at all when `ctx.readOnlyGlobal` is true (`MCP_READ_ONLY=true`);
- * - when `args.confirm !== true` it never calls `execute` and instead returns
- *   `{ dryRun: true, wouldDo }` (via {@link confirmGuard}), changing nothing;
+ * - when `args.confirm !== true` it calls `wouldDo(args, site, client)` and returns
+ *   `{ dryRun: true, wouldDo }`, without calling `execute` and without any write request;
  * - when confirmed, it calls {@link requireWritable} first, so a per-site `readOnly: true`
- *   site refuses with a clear error and no write is attempted;
+ *   site refuses with a clear error and no write is attempted, then calls `execute`;
  * - every *confirmed* attempt (success or failure) is written to `ctx.audit`, redacted.
+ *
+ * `wouldDo` may be sync or async (return a plain value or a `Promise`), and receives
+ * `(args, site, client)` — the `client` param is optional for callers that don't need it,
+ * so existing `(args)` / `(args, site)` wouldDo callbacks keep working unchanged. This lets
+ * a dry-run preview fetch live state (e.g. current settings, or a self-lockout check) before
+ * describing the change. A `wouldDo` that throws — to refuse the call outright (bad input,
+ * a missing bridge route, a self-lockout guard) — is never audited as a write attempt (only
+ * *confirmed* execute attempts are audited) and produces a plain `errorResult`, exactly like
+ * a throwing `execute`.
  *
  * ```ts
  * registerWriteTool(server, ctx, {
@@ -176,8 +185,13 @@ export interface WriteToolConfig<Shape extends ZodRawShapeCompat> {
   /** Must include `site: z.string()`; should include `confirm: z.boolean().optional()`. */
   inputSchema: Shape;
   annotations?: ToolAnnotations;
-  /** Builds the object returned as `wouldDo` in the dry-run preview. */
-  wouldDo: (args: ShapeOutput<Shape>, site: ResolvedSite) => unknown;
+  /**
+   * Builds the object returned as `wouldDo` in the dry-run preview. May be sync or async,
+   * and may use `client` to fetch live state for an accurate preview (e.g. current -> new
+   * values, or a self-lockout guard check). Only called when `args.confirm !== true`.
+   * A thrown error here is reported as an `errorResult` and is never audited.
+   */
+  wouldDo: (args: ShapeOutput<Shape>, site: ResolvedSite, client: WpClient) => unknown | Promise<unknown>;
   /** Performs the actual write. Only called once confirmed and the site is writable. */
   execute: (args: ShapeOutput<Shape>, site: ResolvedSite, client: WpClient) => Promise<unknown>;
 }
@@ -198,12 +212,12 @@ export function registerWriteTool<Shape extends ZodRawShapeCompat>(
     const confirmed = (args as Record<string, unknown>).confirm === true;
     try {
       const site = ctx.registry.get(siteId);
-      const guard = confirmGuard(confirmed ? true : undefined, () => config.wouldDo(args, site));
-      if (guard) {
-        return jsonResult(guard);
+      const client = ctx.registry.client(siteId);
+      if (!confirmed) {
+        const wouldDo = await config.wouldDo(args, site, client);
+        return jsonResult({ dryRun: true, wouldDo });
       }
       requireWritable(site);
-      const client = ctx.registry.client(siteId);
       const data = await config.execute(args, site, client);
       ctx.audit.log({ tool: config.name, site: siteId, args, ok: true });
       return jsonResult(data);

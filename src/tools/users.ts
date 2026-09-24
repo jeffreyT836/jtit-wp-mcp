@@ -1,11 +1,9 @@
 import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
-import type { McpServer, ToolCallback } from '@modelcontextprotocol/sdk/server/mcp.js';
-import type { ShapeOutput, ZodRawShapeCompat } from '@modelcontextprotocol/sdk/server/zod-compat.js';
-import type { ResolvedSite } from '../config/schema.js';
+import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { WpClient } from '../wp/client.js';
 import type { ToolContext } from './context.js';
-import { errorResult, jsonResult, registerWriteTool, requireWritable } from './helpers.js';
+import { errorResult, jsonResult, registerWriteTool } from './helpers.js';
 
 interface WpUser {
   id: number;
@@ -58,70 +56,6 @@ function mapUser(user: WpUser): {
 /** Generates a cryptographically random, URL-safe password of well over 24 characters. */
 function generatePassword(): string {
   return randomBytes(24).toString('base64url');
-}
-
-/**
- * Mirrors {@link registerWriteTool}'s confirm/dry-run/readOnly/audit contract, but allows
- * `buildPreview` to be async so a dry-run can fetch the current WP state (e.g. current
- * roles, or the user about to be deleted) before showing a from -> to preview. Used only
- * where that live lookup is required; every other write tool here uses
- * {@link registerWriteTool} directly.
- */
-interface AsyncWriteToolConfig<Shape extends ZodRawShapeCompat> {
-  name: string;
-  title: string;
-  description: string;
-  inputSchema: Shape;
-  annotations?: Record<string, unknown>;
-  buildPreview: (args: ShapeOutput<Shape>, site: ResolvedSite, client: WpClient) => Promise<unknown>;
-  execute: (args: ShapeOutput<Shape>, site: ResolvedSite, client: WpClient) => Promise<unknown>;
-}
-
-function registerAsyncWriteTool<Shape extends ZodRawShapeCompat>(
-  server: McpServer,
-  ctx: ToolContext,
-  config: AsyncWriteToolConfig<Shape>,
-): void {
-  if (ctx.readOnlyGlobal) return;
-
-  const handler: ToolCallback<Shape> = (async (args: ShapeOutput<Shape>) => {
-    const siteId = String((args as Record<string, unknown>).site ?? '');
-    const confirmed = (args as Record<string, unknown>).confirm === true;
-    try {
-      const site = ctx.registry.get(siteId);
-      const client = ctx.registry.client(siteId);
-      if (!confirmed) {
-        const preview = await config.buildPreview(args, site, client);
-        return jsonResult({ dryRun: true, wouldDo: preview });
-      }
-      requireWritable(site);
-      const data = await config.execute(args, site, client);
-      ctx.audit.log({ tool: config.name, site: siteId, args, ok: true });
-      return jsonResult(data);
-    } catch (err) {
-      if (confirmed) {
-        ctx.audit.log({
-          tool: config.name,
-          site: siteId,
-          args,
-          ok: false,
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
-      return errorResult(err);
-    }
-  }) as unknown as ToolCallback<Shape>;
-
-  server.registerTool(
-    config.name,
-    {
-      title: config.title,
-      description: config.description,
-      inputSchema: config.inputSchema,
-      annotations: { readOnlyHint: false, ...config.annotations },
-    },
-    handler,
-  );
 }
 
 /** Fetches the target user + the bot's own identity, and refuses removing its own admin role. */
@@ -295,7 +229,7 @@ export function register(server: McpServer, ctx: ToolContext): void {
     },
   });
 
-  registerAsyncWriteTool(server, ctx, {
+  registerWriteTool(server, ctx, {
     name: 'update_user_roles',
     title: 'Update user roles',
     description:
@@ -309,7 +243,7 @@ export function register(server: McpServer, ctx: ToolContext): void {
       confirm: z.boolean().optional().describe('Must be true to actually apply the role change.'),
     },
     annotations: { destructiveHint: false, idempotentHint: true },
-    buildPreview: async (args, _site, client) => {
+    wouldDo: async (args, _site, client) => {
       const { current } = await loadAndGuardRoleChange(client, args.id, args.roles);
       return {
         action: 'update_user_roles',
@@ -329,7 +263,7 @@ export function register(server: McpServer, ctx: ToolContext): void {
     },
   });
 
-  registerAsyncWriteTool(server, ctx, {
+  registerWriteTool(server, ctx, {
     name: 'delete_user',
     title: 'Delete user',
     description:
@@ -344,7 +278,7 @@ export function register(server: McpServer, ctx: ToolContext): void {
       confirm: z.boolean().optional().describe('Must be true to actually delete the user.'),
     },
     annotations: { destructiveHint: true, idempotentHint: false },
-    buildPreview: async (args, _site, client) => {
+    wouldDo: async (args, _site, client) => {
       if (args.reassign === args.id) {
         throw new Error('reassign must be a different user id than the one being deleted');
       }
