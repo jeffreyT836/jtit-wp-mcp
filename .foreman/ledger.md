@@ -11,3 +11,5 @@ Baseline: git init, commit "chore: spec" (see below).
 | W3 README + verify | sonnet/verifier | README.md | PENDING |
 
 ## Attempts (append-only)
+- W1 attempt 1 (sonnet): DONE, commit f221d87, 52 tests, 94% lines. Lead spot-check green.
+- W2a/W2b/W2c dispatched in parallel (sonnet), disjoint write sets, baseline f221d87.
