@@ -427,15 +427,23 @@ export function register(server: McpServer, ctx: ToolContext): void {
     annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: true },
     wouldDo: (args) => ({ action: 'update_translations', site: args.site }),
     execute: async (_args, _site, client) => {
-      const data = await client.bridge<{ success?: boolean; count?: number; error?: string; no_update?: boolean }>(
-        '/updates/translations',
-        { method: 'POST', timeoutMs: ctx.env.WP_UPDATE_TIMEOUT_MS },
-      );
-      if (data.no_update === true || data.count === 0) {
-        return { status: 'up_to_date' as const, count: data.count ?? 0 };
+      const data = await client.bridge<{
+        success?: boolean;
+        count?: number;
+        failed?: number;
+        errors?: string[];
+        error?: string;
+        no_update?: boolean;
+      }>('/updates/translations', { method: 'POST', timeoutMs: ctx.env.WP_UPDATE_TIMEOUT_MS });
+      const failed = data.failed ?? (data.success === false ? 1 : 0);
+      const nothingPending = data.no_update === true || (data.success !== false && (data.count ?? 0) === 0);
+      if (nothingPending && failed === 0) {
+        return { status: 'up_to_date' as const, count: 0 };
       }
-      if (data && data.success === false) {
-        return writeOutcome(data, { failed: 1, total: 1, errorSummary: data.error ?? 'translations update failed' });
+      if (data.success === false || failed > 0) {
+        const succeeded = data.count ?? 0;
+        const errorSummary = data.errors?.length ? data.errors.join('; ') : (data.error ?? 'translations update failed');
+        return writeOutcome(data, { failed: Math.max(failed, 1), total: succeeded + Math.max(failed, 1), errorSummary });
       }
       return data;
     },

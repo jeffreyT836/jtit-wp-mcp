@@ -60,19 +60,15 @@ before upgrading each item: a plugin/theme with nothing pending is reported
 as `{success: false, from, to: from, error: "No update available.", no_update: true}`
 rather than being sent through the upgrader.
 
-`POST /updates/translations` treats a `null` per-item result from
-`Language_Pack_Upgrader::bulk_upgrade()` as a failure, not a success:
-`class-wp-upgrader.php`'s `bulk_upgrade()` only ever writes an entry into its
-result array for an item that succeeded, leaving failed items as `null`
-rather than `false` or a `WP_Error`, so treating "no entry recorded" as
-success previously reported failed translation updates as successful. The
-response is now `{success, count, failed, errors?, no_update?}`: `count` is
-the number of translations that installed successfully, `failed` is the
-number that did not, `errors` (present only when non-empty) lists the
-messages from `$skin->get_error_messages()`, `success` is `true` only when
-`failed` is `0` and `count` is greater than `0`, and when there was nothing
-pending the response is `{success: true, count: 0, failed: 0, no_update:
-true}`.
+`POST /updates/translations` does not trust the per-item result array of
+`Language_Pack_Upgrader::bulk_upgrade()`: `WP_Upgrader` carries the previous
+item's result over, so a failure after a success looks like a success. Instead
+the bridge records the pending packs (`type:slug:language`), runs the upgrade,
+forces a fresh update check and counts every pack that is *still pending* as
+failed. Response: `{success, count, failed, failed_items?, errors?, no_update?}`
+— `success` is `true` only when `failed` is `0`; `failed_items` lists the
+packs still pending; `errors` holds the upgrader skin messages. With nothing
+pending the response is `{success: true, count: 0, failed: 0, no_update: true}`.
 
 `POST /updates/core` also reports `no_update: true` alongside the existing
 `{success: false, from, to, error}` shape when no core update is available,

@@ -630,6 +630,46 @@ describe('tools/updates', () => {
     expect(harness.auditEntries[0]).toMatchObject({ tool: 'update_translations', ok: false, error: 'network unreachable' });
   });
 
+  it('update_translations treats a total failure with count:0 as an error, not up_to_date', async () => {
+    const site = makeSite({ id: 'acme' });
+    harness = await createHarness({
+      sites: [site],
+      fetch: createMockFetch((_url, init) => {
+        if (init?.method === 'POST') {
+          return jsonResponse({ success: false, count: 0, failed: 8, errors: ['Could not create directory.'] });
+        }
+        return jsonResponse(sampleUpdates);
+      }),
+    });
+    const result = await harness.client.callTool({
+      name: 'update_translations',
+      arguments: { site: 'acme', confirm: true },
+    });
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).not.toContain('up_to_date');
+    expect(harness.auditEntries[0]).toMatchObject({ tool: 'update_translations', ok: false });
+    expect(String(harness.auditEntries[0]?.error)).toContain('Could not create directory.');
+  });
+
+  it('update_translations reports a partial failure without isError but audits ok:false', async () => {
+    const site = makeSite({ id: 'acme' });
+    harness = await createHarness({
+      sites: [site],
+      fetch: createMockFetch((_url, init) => {
+        if (init?.method === 'POST') {
+          return jsonResponse({ success: false, count: 2, failed: 3, errors: ['Could not copy file.'] });
+        }
+        return jsonResponse(sampleUpdates);
+      }),
+    });
+    const result = await harness.client.callTool({
+      name: 'update_translations',
+      arguments: { site: 'acme', confirm: true },
+    });
+    expect(result.isError).toBeUndefined();
+    expect(harness.auditEntries[0]).toMatchObject({ tool: 'update_translations', ok: false });
+  });
+
   it('update_translations confirmed with count:0 returns a non-error up_to_date result audited ok:true', async () => {
     const site = makeSite({ id: 'acme' });
     harness = await createHarness({

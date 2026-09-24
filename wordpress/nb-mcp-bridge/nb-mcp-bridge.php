@@ -5,7 +5,7 @@
  * Description:       Companion mu-plugin for wp-fleet-mcp. Exposes REST endpoints
  *                     (namespace nb-mcp/v1) for status, update management and role
  *                     information that WordPress core REST does not provide.
- * Version:           1.0.3
+ * Version:           1.0.4
  * Requires at least: 6.0
  * Requires PHP:      7.4
  * Author:            wp-fleet-mcp
@@ -18,7 +18,7 @@
 defined( 'ABSPATH' ) || exit;
 
 // Reported by GET /nb-mcp/v1/status; keep in sync with the "Version" header above.
-define( 'NB_MCP_BRIDGE_VERSION', '1.0.3' );
+define( 'NB_MCP_BRIDGE_VERSION', '1.0.4' );
 
 /**
  * Register all nb-mcp/v1 REST routes.
@@ -905,6 +905,16 @@ function nb_mcp_bridge_update_core( WP_REST_Request $request ) {
 }
 
 /**
+ * Builds a stable identifier for a translation update offer.
+ *
+ * @param object $update Language pack update object from wp_get_translation_updates().
+ * @return string "<type>:<slug>:<language>", e.g. "plugin:akismet:nl_NL".
+ */
+function nb_mcp_bridge_translation_key( $update ) {
+	return sprintf( '%s:%s:%s', $update->type, $update->slug, $update->language );
+}
+
+/**
  * POST /nb-mcp/v1/updates/translations
  */
 function nb_mcp_bridge_update_translations() {
@@ -941,54 +951,54 @@ function nb_mcp_bridge_update_translations() {
 		);
 	}
 
+	$pending_keys = array_map( 'nb_mcp_bridge_translation_key', $updates );
+
 	$skin     = new WP_Ajax_Upgrader_Skin();
 	$upgrader = new Language_Pack_Upgrader( $skin );
 	$result   = $upgrader->bulk_upgrade( $updates );
 
-	// bulk_upgrade() returns an array of per-item WP_Upgrader::run() results,
-	// `true` if there was nothing to do, `false` on a fatal filesystem error,
-	// or a WP_Error. Crucially, the per-item array only ever has an entry
-	// assigned for items that *succeeded* -- class-wp-upgrader.php's
-	// bulk_upgrade() only writes to $results[$key] inside the "on success"
-	// branch, so a failed item is left as `null` rather than `false` or a
-	// WP_Error. Treat null the same as false/WP_Error: a failure.
+	// The per-item array returned by bulk_upgrade() is not trustworthy: WP_Upgrader
+	// keeps $this->result from the previous item, so a failure that follows a success
+	// is reported as a success. Instead, derive the outcome from the source of truth:
+	// force a fresh update check and see which of the requested packs are still pending.
+	foreach ( array( 'update_core', 'update_plugins', 'update_themes' ) as $transient ) {
+		delete_site_transient( $transient );
+	}
+	wp_version_check();
+	wp_update_plugins();
+	wp_update_themes();
+
+	$still_pending = array_intersect(
+		$pending_keys,
+		array_map( 'nb_mcp_bridge_translation_key', wp_get_translation_updates() )
+	);
+
+	$failed    = count( $still_pending );
+	$succeeded = count( $pending_keys ) - $failed;
 	$errors    = array();
-	$succeeded = 0;
 
 	if ( is_wp_error( $result ) ) {
 		$errors[] = $result->get_error_message();
-	} elseif ( is_array( $result ) ) {
-		foreach ( $result as $item_result ) {
-			if ( is_wp_error( $item_result ) ) {
-				$errors[] = $item_result->get_error_message();
-				continue;
-			}
-			if ( null === $item_result || false === $item_result ) {
-				continue;
-			}
-			++$succeeded;
+	}
+	if ( $failed > 0 ) {
+		$messages = array_values( (array) $skin->get_error_messages() );
+		$errors   = array_merge( $errors, $messages );
+		if ( empty( $errors ) ) {
+			$errors[] = __( 'Translation update did not complete.', 'nb-mcp-bridge' );
 		}
-	} elseif ( true === $result ) {
-		$succeeded = count( $updates );
 	}
-
-	$failed = count( $updates ) - $succeeded;
-
-	if ( $failed > 0 && empty( $errors ) ) {
-		$messages = $skin->get_error_messages();
-		$errors   = ! empty( $messages ) ? array_values( (array) $messages ) : array( __( 'Translation update did not complete.', 'nb-mcp-bridge' ) );
-	}
-
-	$success = ( 0 === $failed ) && ( $succeeded > 0 );
 
 	$response = array(
-		'success' => $success,
+		'success' => 0 === $failed,
 		'count'   => $succeeded,
 		'failed'  => $failed,
 	);
 
+	if ( $failed > 0 ) {
+		$response['failed_items'] = array_values( $still_pending );
+	}
 	if ( ! empty( $errors ) ) {
-		$response['errors'] = $errors;
+		$response['errors'] = array_values( array_unique( $errors ) );
 	}
 
 	return rest_ensure_response( $response );
