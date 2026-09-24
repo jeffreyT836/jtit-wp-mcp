@@ -18,3 +18,6 @@ Baseline: git init, commit "chore: spec" (see below).
 - Fix wave dispatched: TS worker (src/tests/README/compose) ∥ PHP worker (wordpress/**).
 - Verify #2 @a92a3a9: PASS_WITH_NOTES (11/11 fixed; 2 MED new: update audit ok on failure, core autoupdate offers). Fix round 2 dispatched TS ∥ PHP.
 - Verify #3 @aa6a4fd: FAIL — HIGH regression (stale /updates read skips updates), MED core preview, MED translations null, LOW core up-to-date as error. Round 3 dispatched TS ∥ PHP (contract: no_update:true).
+- Verify #4 @440e5f8: FAIL (translations). Lead took over translations (2 prior rounds failed).
+- b0314ca PASS_WITH_NOTES (API-outage false success) → 6646238 FAIL (core pack multi-domain) → 0e5a2e9 PASS (blind, live WP 7.0.1).
+- FINAL: all tasks DONE, verified. Image wp-fleet-mcp rebuilt from 0e5a2e9.
