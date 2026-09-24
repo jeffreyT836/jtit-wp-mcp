@@ -5,7 +5,7 @@
  * Description:       Companion mu-plugin for wp-fleet-mcp. Exposes REST endpoints
  *                     (namespace nb-mcp/v1) for status, update management and role
  *                     information that WordPress core REST does not provide.
- * Version:           1.0.2
+ * Version:           1.0.3
  * Requires at least: 6.0
  * Requires PHP:      7.4
  * Author:            wp-fleet-mcp
@@ -18,7 +18,7 @@
 defined( 'ABSPATH' ) || exit;
 
 // Reported by GET /nb-mcp/v1/status; keep in sync with the "Version" header above.
-define( 'NB_MCP_BRIDGE_VERSION', '1.0.2' );
+define( 'NB_MCP_BRIDGE_VERSION', '1.0.3' );
 
 /**
  * Register all nb-mcp/v1 REST routes.
@@ -480,11 +480,12 @@ function nb_mcp_bridge_run_bulk_upgrade( $items, $id_key, $exists_cb, $has_updat
 
 		if ( ! call_user_func( $has_update_cb, $id ) ) {
 			$results[ $id ] = array(
-				$id_key   => $id,
-				'success' => false,
-				'from'    => $version_before,
-				'to'      => $version_before,
-				'error'   => __( 'No update available.', 'nb-mcp-bridge' ),
+				$id_key     => $id,
+				'success'   => false,
+				'from'      => $version_before,
+				'to'        => $version_before,
+				'error'     => __( 'No update available.', 'nb-mcp-bridge' ),
+				'no_update' => true,
 			);
 			continue;
 		}
@@ -855,10 +856,11 @@ function nb_mcp_bridge_update_core( WP_REST_Request $request ) {
 
 		return rest_ensure_response(
 			array(
-				'success' => false,
-				'from'    => $from,
-				'to'      => $from,
-				'error'   => __( 'No core update is available.', 'nb-mcp-bridge' ),
+				'success'   => false,
+				'from'      => $from,
+				'to'        => $from,
+				'error'     => __( 'No core update is available.', 'nb-mcp-bridge' ),
+				'no_update' => true,
 			)
 		);
 	}
@@ -931,8 +933,10 @@ function nb_mcp_bridge_update_translations() {
 	if ( empty( $updates ) ) {
 		return rest_ensure_response(
 			array(
-				'success' => true,
-				'count'   => 0,
+				'success'   => true,
+				'count'     => 0,
+				'failed'    => 0,
+				'no_update' => true,
 			)
 		);
 	}
@@ -941,20 +945,25 @@ function nb_mcp_bridge_update_translations() {
 	$upgrader = new Language_Pack_Upgrader( $skin );
 	$result   = $upgrader->bulk_upgrade( $updates );
 
-	// bulk_upgrade() returns an array of per-item WP_Upgrader::run() results
-	// (an array on success, `false`/WP_Error on failure), `true` if there was
-	// nothing to do, `false` on a fatal filesystem error, or a WP_Error.
-	$error     = '';
+	// bulk_upgrade() returns an array of per-item WP_Upgrader::run() results,
+	// `true` if there was nothing to do, `false` on a fatal filesystem error,
+	// or a WP_Error. Crucially, the per-item array only ever has an entry
+	// assigned for items that *succeeded* -- class-wp-upgrader.php's
+	// bulk_upgrade() only writes to $results[$key] inside the "on success"
+	// branch, so a failed item is left as `null` rather than `false` or a
+	// WP_Error. Treat null the same as false/WP_Error: a failure.
+	$errors    = array();
 	$succeeded = 0;
 
 	if ( is_wp_error( $result ) ) {
-		$error = $result->get_error_message();
+		$errors[] = $result->get_error_message();
 	} elseif ( is_array( $result ) ) {
 		foreach ( $result as $item_result ) {
-			if ( is_wp_error( $item_result ) || false === $item_result ) {
-				if ( '' === $error && is_wp_error( $item_result ) ) {
-					$error = $item_result->get_error_message();
-				}
+			if ( is_wp_error( $item_result ) ) {
+				$errors[] = $item_result->get_error_message();
+				continue;
+			}
+			if ( null === $item_result || false === $item_result ) {
 				continue;
 			}
 			++$succeeded;
@@ -963,22 +972,26 @@ function nb_mcp_bridge_update_translations() {
 		$succeeded = count( $updates );
 	}
 
-	$success = ( '' === $error ) && ( $succeeded === count( $updates ) );
+	$failed = count( $updates ) - $succeeded;
 
-	if ( ! $success && '' === $error ) {
+	if ( $failed > 0 && empty( $errors ) ) {
 		$messages = $skin->get_error_messages();
-		$error    = ! empty( $messages ) ? implode( ' ', (array) $messages ) : __( 'Translation update did not complete.', 'nb-mcp-bridge' );
+		$errors   = ! empty( $messages ) ? array_values( (array) $messages ) : array( __( 'Translation update did not complete.', 'nb-mcp-bridge' ) );
 	}
 
-	return rest_ensure_response(
-		nb_mcp_bridge_trim_empty_error(
-			array(
-				'success' => $success,
-				'count'   => $succeeded,
-				'error'   => $error,
-			)
-		)
+	$success = ( 0 === $failed ) && ( $succeeded > 0 );
+
+	$response = array(
+		'success' => $success,
+		'count'   => $succeeded,
+		'failed'  => $failed,
 	);
+
+	if ( ! empty( $errors ) ) {
+		$response['errors'] = $errors;
+	}
+
+	return rest_ensure_response( $response );
 }
 
 /**
