@@ -5,7 +5,7 @@
  * Description:       Companion mu-plugin for wp-fleet-mcp. Exposes REST endpoints
  *                     (namespace nb-mcp/v1) for status, update management and role
  *                     information that WordPress core REST does not provide.
- * Version:           1.0.0
+ * Version:           1.0.1
  * Requires at least: 6.0
  * Requires PHP:      7.4
  * Author:            wp-fleet-mcp
@@ -18,7 +18,7 @@
 defined( 'ABSPATH' ) || exit;
 
 // Reported by GET /nb-mcp/v1/status; keep in sync with the "Version" header above.
-define( 'NB_MCP_BRIDGE_VERSION', '1.0.0' );
+define( 'NB_MCP_BRIDGE_VERSION', '1.0.1' );
 
 /**
  * Register all nb-mcp/v1 REST routes.
@@ -220,12 +220,21 @@ function nb_mcp_bridge_check_file_mods_allowed() {
 }
 
 /**
+ * Load the wp-admin includes needed for plugin/theme introspection
+ * (get_plugins(), is_plugin_active(), wp_get_theme() helpers, etc.).
+ * Safe to call from any handler; require_once is idempotent.
+ */
+function nb_mcp_bridge_load_admin_includes() {
+	require_once ABSPATH . 'wp-admin/includes/plugin.php';
+	require_once ABSPATH . 'wp-admin/includes/theme.php';
+}
+
+/**
  * Load the wp-admin includes required by the upgrader classes and update helpers.
  */
 function nb_mcp_bridge_load_upgrade_dependencies() {
+	nb_mcp_bridge_load_admin_includes();
 	require_once ABSPATH . 'wp-admin/includes/file.php';
-	require_once ABSPATH . 'wp-admin/includes/plugin.php';
-	require_once ABSPATH . 'wp-admin/includes/theme.php';
 	require_once ABSPATH . 'wp-admin/includes/update.php';
 	require_once ABSPATH . 'wp-admin/includes/misc.php';
 	// Pulls in Plugin_Upgrader, Theme_Upgrader, Core_Upgrader,
@@ -274,6 +283,8 @@ function nb_mcp_bridge_trim_empty_error( $result ) {
  */
 function nb_mcp_bridge_get_status() {
 	global $wpdb;
+
+	nb_mcp_bridge_load_admin_includes();
 
 	$active_theme = wp_get_theme();
 	$all_plugins  = get_plugins();
@@ -430,21 +441,24 @@ function nb_mcp_bridge_upgrade_item_outcome( $item_result, $from, $to, $skin ) {
 /**
  * Shared bulk-upgrade runner for /updates/plugins and /updates/themes. Runs
  * $upgrader_class::bulk_upgrade() over $items ('plugin'/'theme' $id_key rows),
- * using $exists_cb/$version_before_cb/$version_after_cb to validate and diff
- * versions, with optional $after_bulk_cb (once) and $per_item_cb (per id) hooks.
+ * using $exists_cb/$has_update_cb/$version_before_cb/$version_after_cb to
+ * validate, skip items with nothing pending, and diff versions, with optional
+ * $after_bulk_cb (once) and $per_item_cb (per id) hooks.
  *
+ * @param callable $has_update_cb Given an id, returns true if the update
+ *                                transient has a pending update for it.
+ *                                Items without one are reported as
+ *                                success:false, error "No update available"
+ *                                without ever reaching bulk_upgrade().
  * @return array List of result rows, in $items order.
  */
-function nb_mcp_bridge_run_bulk_upgrade( $items, $id_key, $exists_cb, $version_before_cb, $version_after_cb, $upgrader_class, $after_bulk_cb = null, $per_item_cb = null ) {
+function nb_mcp_bridge_run_bulk_upgrade( $items, $id_key, $exists_cb, $has_update_cb, $version_before_cb, $version_after_cb, $upgrader_class, $after_bulk_cb = null, $per_item_cb = null ) {
 	$valid           = array();
 	$results         = array();
 	$versions_before = array();
 
 	foreach ( $items as $id ) {
-		if ( call_user_func( $exists_cb, $id ) ) {
-			$valid[]                = $id;
-			$versions_before[ $id ] = call_user_func( $version_before_cb, $id );
-		} else {
+		if ( ! call_user_func( $exists_cb, $id ) ) {
 			$results[ $id ] = array(
 				$id_key   => $id,
 				'success' => false,
@@ -456,7 +470,24 @@ function nb_mcp_bridge_run_bulk_upgrade( $items, $id_key, $exists_cb, $version_b
 					$id_key
 				),
 			);
+			continue;
 		}
+
+		$version_before = call_user_func( $version_before_cb, $id );
+
+		if ( ! call_user_func( $has_update_cb, $id ) ) {
+			$results[ $id ] = array(
+				$id_key   => $id,
+				'success' => false,
+				'from'    => $version_before,
+				'to'      => $version_before,
+				'error'   => __( 'No update available.', 'nb-mcp-bridge' ),
+			);
+			continue;
+		}
+
+		$valid[]                = $id;
+		$versions_before[ $id ] = $version_before;
 	}
 
 	if ( ! empty( $valid ) ) {
@@ -527,9 +558,10 @@ function nb_mcp_bridge_update_plugins( WP_REST_Request $request ) {
 	// exposed only via the update transient filter) are known before upgrading.
 	wp_update_plugins();
 
-	$known_before  = get_plugins();
-	$known_after   = array();
-	$active_before = array();
+	$known_before    = get_plugins();
+	$known_after     = array();
+	$active_before   = array();
+	$pending_updates = get_plugin_updates();
 
 	foreach ( $requested as $plugin_file ) {
 		$active_before[ $plugin_file ] = is_plugin_active( $plugin_file );
@@ -540,6 +572,9 @@ function nb_mcp_bridge_update_plugins( WP_REST_Request $request ) {
 		'plugin',
 		function ( $id ) use ( $known_before ) {
 			return isset( $known_before[ $id ] );
+		},
+		function ( $id ) use ( $pending_updates ) {
+			return isset( $pending_updates[ $id ] );
 		},
 		function ( $id ) use ( $known_before ) {
 			return isset( $known_before[ $id ]['Version'] ) ? $known_before[ $id ]['Version'] : '';
@@ -587,11 +622,16 @@ function nb_mcp_bridge_update_themes( WP_REST_Request $request ) {
 
 	wp_update_themes();
 
+	$pending_updates = get_theme_updates();
+
 	$results = nb_mcp_bridge_run_bulk_upgrade(
 		$requested,
 		'theme',
 		function ( $id ) {
 			return wp_get_theme( $id )->exists();
+		},
+		function ( $id ) use ( $pending_updates ) {
+			return isset( $pending_updates[ $id ] );
 		},
 		function ( $id ) {
 			return wp_get_theme( $id )->get( 'Version' );
@@ -624,6 +664,48 @@ function nb_mcp_bridge_is_major_version_change( $from, $to ) {
 }
 
 /**
+ * Pick the best available core upgrade offer from get_core_updates().
+ *
+ * find_core_update( $version, $locale ) matches an offer's `current` field,
+ * which is the offer's TARGET version, against $version — so calling it with
+ * get_bloginfo('version') only ever matches a same-version reinstall/security
+ * offer, never a genuine newer-version upgrade. Instead, scan the offers WP
+ * already fetched via get_core_updates() for a response of 'upgrade',
+ * preferring the site's locale, then en_US, then whatever is left.
+ *
+ * @return object|null The chosen update offer, or null if none is available.
+ */
+function nb_mcp_bridge_select_core_update() {
+	$offers = array();
+
+	foreach ( (array) get_core_updates() as $update ) {
+		if ( is_object( $update ) && isset( $update->response ) && 'upgrade' === $update->response ) {
+			$offers[] = $update;
+		}
+	}
+
+	if ( empty( $offers ) ) {
+		return null;
+	}
+
+	$preferred_locale = get_locale();
+
+	foreach ( $offers as $offer ) {
+		if ( isset( $offer->locale ) && $preferred_locale === $offer->locale ) {
+			return $offer;
+		}
+	}
+
+	foreach ( $offers as $offer ) {
+		if ( isset( $offer->locale ) && 'en_US' === $offer->locale ) {
+			return $offer;
+		}
+	}
+
+	return $offers[0];
+}
+
+/**
  * POST /nb-mcp/v1/updates/core
  */
 function nb_mcp_bridge_update_core( WP_REST_Request $request ) {
@@ -648,9 +730,9 @@ function nb_mcp_bridge_update_core( WP_REST_Request $request ) {
 	wp_version_check();
 
 	$from   = get_bloginfo( 'version' );
-	$update = find_core_update( $from, get_locale() );
+	$update = nb_mcp_bridge_select_core_update();
 
-	if ( ! $update || 'upgrade' !== $update->response ) {
+	if ( ! $update ) {
 		return rest_ensure_response(
 			array(
 				'success' => false,
@@ -661,13 +743,17 @@ function nb_mcp_bridge_update_core( WP_REST_Request $request ) {
 		);
 	}
 
-	if ( ! $allow_major && nb_mcp_bridge_is_major_version_change( $from, $update->version ) ) {
+	// $update->current is the offer's TARGET version (see
+	// nb_mcp_bridge_select_core_update() for why we don't use find_core_update()).
+	$to_version = isset( $update->current ) ? $update->current : '';
+
+	if ( ! $allow_major && nb_mcp_bridge_is_major_version_change( $from, $to_version ) ) {
 		return new WP_Error(
 			'nb_mcp_major_update_blocked',
 			sprintf(
 				/* translators: 1: target version, 2: current version. */
 				__( 'Update to %1$s is a major version change from %2$s. Pass allow_major=true to proceed.', 'nb-mcp-bridge' ),
-				$update->version,
+				$to_version,
 				$from
 			),
 			array( 'status' => 409 )

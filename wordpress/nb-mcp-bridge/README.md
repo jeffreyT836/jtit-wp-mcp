@@ -55,6 +55,17 @@ initialized (see **Troubleshooting** below).
 See `docs/SPEC.md` §5 in the `wp-fleet-mcp` repo for the full response field
 contract; the TypeScript client depends on these field names exactly.
 
+`POST /updates/plugins` and `POST /updates/themes` check the update transient
+before upgrading each item: a plugin/theme with nothing pending is reported
+as `{success: false, from, to: from, error: "No update available."}` rather
+than being sent through the upgrader.
+
+`POST /updates/core` selects its offer from `get_core_updates()` by
+`response === "upgrade"` (preferring the site's locale, then `en_US`), since
+`find_core_update()` matches an offer's `current` field — which is the
+offer's *target* version, not the installed one — and would otherwise never
+match.
+
 ## Filter hooks
 
 - `nb_mcp_bridge_require_app_password` (default `true`) — return `false` to
