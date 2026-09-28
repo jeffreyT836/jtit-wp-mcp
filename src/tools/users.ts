@@ -3,17 +3,8 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { WpClient } from '../wp/client.js';
 import type { ToolContext } from './context.js';
+import { loadAndGuardDeletion, mapUser, usernameSchema, type WpUser } from '../wp/users.js';
 import { errorResult, jsonResult, registerWriteTool } from './helpers.js';
-
-interface WpUser {
-  id: number;
-  username?: string;
-  slug?: string;
-  name?: string;
-  email?: string;
-  roles?: string[];
-  registered_date?: string;
-}
 
 interface WpApplicationPassword {
   uuid: string;
@@ -23,35 +14,10 @@ interface WpApplicationPassword {
   last_ip?: string | null;
 }
 
-/** WP-safe username: letters, numbers, `_ . @ -` (matches `sanitize_user()`'s allowed set). */
-const usernameSchema = z
-  .string()
-  .min(1)
-  .max(60)
-  .regex(/^[A-Za-z0-9_.@-]+$/, 'username must contain only letters, numbers, and _ . @ -');
-
 const userIdSchema = z.number().int().positive().describe('WordPress user id.');
 const uuidSchema = z
   .string()
   .regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i, 'must be a UUID');
-
-function mapUser(user: WpUser): {
-  id: number;
-  username: string;
-  name?: string;
-  email?: string;
-  roles: string[];
-  registered_date?: string;
-} {
-  return {
-    id: user.id,
-    username: user.username ?? user.slug ?? '',
-    name: user.name,
-    email: user.email,
-    roles: user.roles ?? [],
-    registered_date: user.registered_date,
-  };
-}
 
 /** Generates a cryptographically random, URL-safe password of well over 24 characters. */
 function generatePassword(): string {
@@ -75,20 +41,6 @@ async function loadAndGuardRoleChange(
     );
   }
   return { current, me };
-}
-
-/** Fetches the target user + the bot's own identity, and refuses deleting its own account. */
-async function loadAndGuardDeletion(client: WpClient, targetId: number): Promise<{ target: WpUser }> {
-  const [target, me] = await Promise.all([
-    client.request<WpUser>(`/wp/v2/users/${targetId}`, { query: { context: 'edit' } }),
-    client.request<WpUser>('/wp/v2/users/me', { query: { context: 'edit' } }),
-  ]);
-  if (me.id === targetId) {
-    throw new Error(
-      'refusing to delete the account the MCP server itself authenticates as (this would lock the server out of the site)',
-    );
-  }
-  return { target };
 }
 
 /**

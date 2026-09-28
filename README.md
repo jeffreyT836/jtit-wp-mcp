@@ -448,14 +448,26 @@ wordpress/nb-mcp-bridge/nb-mcp-bridge.php   de mu-plugin
 Tests staan onder `tests/tools/` (per toolmodule) en `tests/core/` (client, loader, store, cli,
 helpers); `tests/helpers/harness.ts` bevat gedeelde testopzet.
 
-## 10. Dashboard (gepland)
+## 10. Dashboard
 
-Er komt een webdashboard op `wp-dashboard.jtit.nl`, in dezelfde repo als een monorepo
-(`apps/mcp`, `apps/dashboard`, `packages/site-store`). Het dashboard en de MCP-server delen
-dezelfde versleutelde SQLite-store: het dashboard schrijft sites en wachtwoorden, de
-MCP-server leest ze alleen (wachtwoordvelden in het dashboard zijn write-only — nooit
-teruggelezen of getoond). Toegang tot het dashboard vereist een sterke login (passkey/TOTP, of
-Traefik forward-auth).
+Het webdashboard draait op `wp-dashboard.jtit.nl` (container `wp-dashboard`, `src/dashboard/`) en
+deelt de versleutelde SQLite-store met de MCP-server: het dashboard schrijft sites en
+Application Passwords (write-only — nooit teruggelezen of getoond), de MCP-server leest ze.
+Inloggen gaat met e-mail + wachtwoord + TOTP; formulieren hebben CSRF-bescherming en elke
+wijziging komt in het audit-log.
+
+Per site:
+
+- **Status en updates** — data van n8n (`/api/ingest`), plus live controleren en plugins,
+  thema's, core en vertalingen bijwerken, optioneel veilig (backup, controle, automatisch
+  terugzetten; vereist nb-mcp-bridge 1.1.0).
+- **Gebruikers** (`/sites/<id>/users`) — live lijst van WordPress-gebruikers met rol, gebruikers
+  aanmaken (gebruikersnaam, e-mail, rol, wachtwoord) en verwijderen met overdracht van hun
+  inhoud. Het wachtwoord gaat alleen via HTTPS naar WordPress; het dashboard slaat het niet op,
+  logt het niet en toont het nooit terug. De gebruiker waarmee het dashboard zelf inlogt kan niet
+  worden verwijderd. Rollen komen via de bridge (inclusief maatwerkrollen zoals
+  `shop_manager`), zonder bridge de standaardrollen. Op sites met "alleen lezen" is alleen de
+  lijst beschikbaar.
 
 Belangrijk: de encryptie beschermt tegen het lekken van de database of een backup, niet tegen
 een gecompromitteerde VPS zelf (die kan de sleutel uit een draaiend proces lezen). Blijf dus

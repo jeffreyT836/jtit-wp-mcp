@@ -76,6 +76,12 @@ small.warn { color: var(--warn); }
 label.plain { font-weight: 400; }
 .run { display: flex; flex-wrap: wrap; gap: 1rem; align-items: center; margin-top: 1.25rem; padding-top: 1rem; border-top: 1px solid var(--border); }
 button[disabled] { opacity: .6; cursor: progress; }
+select { display: block; width: 100%; margin-top: .3rem; padding: .5rem .6rem; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); font: inherit; }
+.password-field { display: flex; gap: .5rem; align-items: center; margin-top: .3rem; }
+.password-field input { margin-top: 0; flex: 1; min-width: 0; font-family: ui-monospace, monospace; }
+.password-field button { padding: .5rem .7rem; }
+details.delete-user summary { cursor: pointer; color: var(--err); }
+details.delete-user form { margin-top: .5rem; min-width: 220px; }
 `;
 
 /** Served at /assets/app.js (CSP allows only same-origin scripts). Progressive enhancement only. */
@@ -87,6 +93,37 @@ document.addEventListener('change', function (e) {
   if (!table) return;
   table.querySelectorAll('tbody input[type=checkbox][name="' + CSS.escape(t.getAttribute('data-select-all') || '') + '"]:not([disabled])')
     .forEach(function (box) { box.checked = t.checked; });
+});
+document.addEventListener('click', function (e) {
+  var t = e.target;
+  if (!t || !t.closest) return;
+  var toggle = t.closest('button[data-toggle-password]');
+  if (toggle) {
+    var input = document.getElementById(toggle.getAttribute('data-toggle-password'));
+    if (!input) return;
+    var show = input.type === 'password';
+    input.type = show ? 'text' : 'password';
+    toggle.textContent = show ? 'Verbergen' : 'Tonen';
+    return;
+  }
+  var gen = t.closest('button[data-generate-password]');
+  if (gen) {
+    var field = document.getElementById(gen.getAttribute('data-generate-password'));
+    if (!field) return;
+    var chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%^&*-_=+';
+    var limit = 256 - (256 % chars.length);
+    var out = '';
+    while (out.length < 24) {
+      var bytes = crypto.getRandomValues(new Uint8Array(32));
+      for (var i = 0; i < bytes.length && out.length < 24; i++) {
+        if (bytes[i] < limit) out += chars[bytes[i] % chars.length];
+      }
+    }
+    field.value = out;
+    field.type = 'text';
+    var toggleBtn = document.querySelector('button[data-toggle-password="' + field.id + '"]');
+    if (toggleBtn) toggleBtn.textContent = 'Verbergen';
+  }
 });
 document.addEventListener('submit', function (e) {
   var btn = e.target.querySelector('button[data-busy]');

@@ -155,6 +155,7 @@ export function siteDetailPage(opts: {
   </dl>
   <div class="actions">
     <a class="button" href="/sites/${site.id}/edit">Bewerken</a>
+    <a class="button secondary" href="/sites/${site.id}/users">Gebruikers</a>
     <form method="post" action="/sites/${site.id}/test" class="inline">
       <input type="hidden" name="_csrf" value="${csrf}">
       <button type="submit" class="secondary">Verbinding testen</button>

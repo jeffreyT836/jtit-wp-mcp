@@ -5,6 +5,7 @@ import { apiRoutes } from './routes/api-routes.js';
 import { authRoutes } from './routes/auth-routes.js';
 import { siteRoutes } from './routes/site-routes.js';
 import { updateRoutes } from './routes/update-routes.js';
+import { userRoutes } from './routes/user-routes.js';
 import { APP_CSS, APP_JS } from './views/styles.js';
 
 const CSP = [
@@ -83,6 +84,7 @@ export function createDashboardApp(deps: DashboardDeps): express.Express {
   app.use(ctx.sessions.load());
   app.use(authRoutes(ctx));
   app.use(updateRoutes(ctx));
+  app.use(userRoutes(ctx));
   app.use(siteRoutes(ctx));
 
   app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
