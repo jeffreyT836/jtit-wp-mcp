@@ -1,44 +1,52 @@
 # Productie-stack. De deploy-workflow kopieert dit bestand naar /docker/jtit-wp-mcp op de
 # server en hernoemt het daar naar docker-compose.yml. De .env in diezelfde map wordt bij de
-# eerste deploy eenmalig gegenereerd (MCP_HTTP_TOKEN, SITES_ENCRYPTION_KEY) en daarna nooit
-# overschreven.
+# eerste deploy gegenereerd (MCP_HTTP_TOKEN, SITES_ENCRYPTION_KEY, DASHBOARD_INGEST_TOKEN);
+# bestaande waarden worden nooit overschreven.
 #
-# Sites beheren (op de server, in /docker/jtit-wp-mcp):
-#   docker compose exec wp-mcp node dist/cli.js sites list
-#   docker compose exec -it wp-mcp node dist/cli.js sites add --id klant-a --name "Klant A" --url https://klant-a.nl
+# - wp-mcp        https://wp-mcp.jtit.nl/mcp (bearer token), intern http://wp-mcp:3000/mcp
+# - wp-dashboard  https://wp-dashboard.jtit.nl (login + TOTP); /api alleen intern:
+#                 http://wp-dashboard:3001/api/ingest (bearer DASHBOARD_INGEST_TOKEN)
+# n8n bereikt beide via het gedeelde Docker-netwerk traefik-network.
+#
+# Sites beheer je in het dashboard. Noodroute via de CLI (op de server, in deze map):
+#   docker compose exec -it wp-mcp node dist/cli.js sites list
+
+x-hardening: &hardening
+  read_only: true
+  tmpfs:
+    - /tmp
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  restart: unless-stopped
+  networks:
+    - traefik-network
+
 services:
   wp-mcp:
+    <<: *hardening
     image: ghcr.io/jeffreyt836/jtit-wp-mcp:latest
     container_name: wp-mcp
-    restart: unless-stopped
     env_file: .env
     environment:
       MCP_TRANSPORT: http
       MCP_HTTP_HOST: 0.0.0.0
       MCP_HTTP_PORT: 3000
-      # Traefik geeft de Host-header zonder poort door.
-      MCP_HTTP_ALLOWED_HOSTS: wp-mcp.jtit.nl
+      # Publiek via Traefik (Host zonder poort) en intern voor n8n (wp-mcp:3000).
+      MCP_HTTP_ALLOWED_HOSTS: wp-mcp.jtit.nl,wp-mcp
       SITES_DB: /app/data/sites.db
       AUDIT_LOG_FILE: /app/logs/audit.jsonl
-    # Bewust geen host-poort: alleen bereikbaar via Traefik.
+    # Bewust geen host-poort: alleen bereikbaar via Traefik en het interne netwerk.
     volumes:
       - wp-mcp-data:/app/data
       - wp-mcp-logs:/app/logs
-    read_only: true
-    tmpfs:
-      - /tmp
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges:true
     healthcheck:
       test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:3000/healthz']
       interval: 15s
       timeout: 5s
       retries: 5
       start_period: 10s
-    networks:
-      - traefik-network
     labels:
       - 'traefik.enable=true'
       # Alleen /mcp publiek; /healthz blijft intern voor de Docker-healthcheck.
@@ -51,10 +59,45 @@ services:
       - 'traefik.http.services.wp-mcp.loadbalancer.server.port=3000'
       - 'traefik.docker.network=traefik-network'
 
+  wp-dashboard:
+    <<: *hardening
+    image: ghcr.io/jeffreyt836/jtit-wp-mcp:latest
+    container_name: wp-dashboard
+    entrypoint: ['node', 'dist/dashboard/index.js']
+    env_file: .env
+    environment:
+      DASHBOARD_HOST: 0.0.0.0
+      DASHBOARD_PORT: 3001
+      SITES_DB: /app/data/sites.db
+      DASHBOARD_DB: /app/dashboard-data/dashboard.db
+    volumes:
+      # Zelfde site-store als wp-mcp: het dashboard schrijft, de MCP leest.
+      - wp-mcp-data:/app/data
+      - wp-dashboard-data:/app/dashboard-data
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:3001/healthz']
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    labels:
+      - 'traefik.enable=true'
+      # /api (n8n-ingest) en /healthz worden niet publiek gerouteerd.
+      - 'traefik.http.routers.wp-dashboard.rule=Host(`wp-dashboard.jtit.nl`) && !PathPrefix(`/api`) && !Path(`/healthz`)'
+      - 'traefik.http.routers.wp-dashboard.entrypoints=websecure'
+      - 'traefik.http.routers.wp-dashboard.tls.certresolver=letsencrypt'
+      - 'traefik.http.routers.wp-dashboard.middlewares=wp-dashboard-ratelimit'
+      - 'traefik.http.middlewares.wp-dashboard-ratelimit.ratelimit.average=30'
+      - 'traefik.http.middlewares.wp-dashboard-ratelimit.ratelimit.burst=60'
+      - 'traefik.http.services.wp-dashboard.loadbalancer.server.port=3001'
+      - 'traefik.docker.network=traefik-network'
+
 volumes:
   wp-mcp-data:
     driver: local
   wp-mcp-logs:
+    driver: local
+  wp-dashboard-data:
     driver: local
 
 networks:

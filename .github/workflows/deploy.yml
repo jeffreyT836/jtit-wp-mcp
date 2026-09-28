@@ -69,7 +69,8 @@ jobs:
     name: Deploy to server
     runs-on: ubuntu-latest
     needs: build-and-push
-    # SSH_HOST, SSH_USER en SSH_KEY staan als secrets in deze GitHub-environment.
+    # SSH_HOST, SSH_USER, SSH_KEY, ADMIN_EMAIL en ADMIN_PASSWORD staan als secrets in
+    # deze GitHub-environment.
     environment: Hostinger
     permissions:
       contents: read
@@ -94,60 +95,73 @@ jobs:
         env:
           GHCR_USER: ${{ github.actor }}
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
+          ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
           command_timeout: 15m
-          envs: GHCR_USER,GHCR_TOKEN
+          envs: GHCR_USER,GHCR_TOKEN,ADMIN_EMAIL,ADMIN_PASSWORD
           script: |
             set -eo pipefail
 
+            if [ -z "$ADMIN_EMAIL" ] || [ -z "$ADMIN_PASSWORD" ]; then
+              echo "::error::ADMIN_EMAIL en/of ADMIN_PASSWORD ontbreken in de GitHub-environment 'Hostinger'."
+              exit 1
+            fi
+
             if ! docker network inspect traefik-network >/dev/null 2>&1; then
-              echo "::error::Docker-netwerk 'traefik-network' bestaat niet op deze server; zonder Traefik is de MCP niet bereikbaar."
+              echo "::error::Docker-netwerk 'traefik-network' bestaat niet op deze server; zonder Traefik is niets bereikbaar."
               exit 1
             fi
 
             cd /docker/jtit-wp-mcp
             mv -f docker-compose.prod.yml docker-compose.yml
 
-            # Eenmalig bij de eerste deploy: bearer token en encryptiesleutel genereren.
-            # Daarna wordt .env nooit meer aangeraakt: een nieuwe SITES_ENCRYPTION_KEY
-            # zou alle opgeslagen application passwords onleesbaar maken.
-            if [ ! -f .env ]; then
-              echo "Eerste deploy: .env genereren..."
-              (
-                umask 077
-                {
-                  printf "MCP_HTTP_TOKEN=%s\n" "$(openssl rand -hex 32)"
-                  printf "SITES_ENCRYPTION_KEY=%s\n" "$(openssl rand -base64 32)"
-                  printf "MCP_READ_ONLY=false\n"
-                } > .env
-              )
-              echo "::warning::Nieuwe .env aangemaakt in /docker/jtit-wp-mcp. Zet MCP_HTTP_TOKEN en SITES_ENCRYPTION_KEY in je password manager."
-            fi
+            # Ontbrekende secrets eenmalig genereren. Bestaande waarden worden nooit
+            # overschreven: een nieuwe SITES_ENCRYPTION_KEY zou alle opgeslagen
+            # application passwords onleesbaar maken.
+            umask 077
+            touch .env
             chmod 600 .env
+            add_secret() {
+              if ! grep -q "^$1=" .env; then
+                printf "%s=%s\n" "$1" "$2" >> .env
+                echo "::warning::$1 aangemaakt in /docker/jtit-wp-mcp/.env; zet hem in je password manager."
+              fi
+            }
+            add_secret MCP_HTTP_TOKEN "$(openssl rand -hex 32)"
+            add_secret SITES_ENCRYPTION_KEY "$(openssl rand -base64 32)"
+            add_secret DASHBOARD_INGEST_TOKEN "$(openssl rand -hex 32)"
+            add_secret MCP_READ_ONLY false
 
             printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
             unset GHCR_TOKEN
-            docker compose pull wp-mcp
-            docker compose up -d --force-recreate wp-mcp
+            docker compose pull
+            docker compose up -d --force-recreate --remove-orphans
 
-            health=starting
-            for attempt in $(seq 1 30); do
-              health=$(docker inspect -f '{{.State.Health.Status}}' wp-mcp || echo unknown)
-              if [ "$health" = "healthy" ]; then
-                break
+            for c in wp-mcp wp-dashboard; do
+              health=starting
+              for attempt in $(seq 1 30); do
+                health=$(docker inspect -f '{{.State.Health.Status}}' "$c" || echo unknown)
+                if [ "$health" = "healthy" ]; then
+                  break
+                fi
+                sleep 3
+              done
+              if [ "$health" != "healthy" ]; then
+                echo "::error::$c is na 90 seconden niet healthy (status: $health)"
+                docker logs --tail 50 "$c" || true
+                exit 1
               fi
-              sleep 3
             done
-            if [ "$health" != "healthy" ]; then
-              echo "::error::wp-mcp is na 90 seconden niet healthy (status: $health)"
-              docker logs --tail 50 wp-mcp || true
-              exit 1
-            fi
 
-            docker compose exec -T wp-mcp node dist/cli.js sites list || true
+            # Admin-account uit de GitHub-secrets (idempotent). De waarden gaan alleen
+            # mee aan dit ene proces en belanden niet in .env.
+            docker compose exec -T -e ADMIN_EMAIL -e ADMIN_PASSWORD wp-dashboard \
+              node dist/dashboard/seed-admin.js
+            unset ADMIN_PASSWORD
 
             docker logout ghcr.io || true
             docker image prune -f || true

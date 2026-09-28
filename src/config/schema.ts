@@ -73,3 +73,21 @@ export const envSchema = z.object({
 });
 
 export type EnvConfig = z.output<typeof envSchema>;
+
+/** Environment for the dashboard process (`dist/dashboard/index.js`). */
+export const dashboardEnvSchema = z.object({
+  SITES_DB: z.string().optional(),
+  SITES_ENCRYPTION_KEY: z.string().min(1, 'SITES_ENCRYPTION_KEY is required'),
+  DASHBOARD_DB: z.string().optional(),
+  DASHBOARD_HOST: z.string().default('0.0.0.0'),
+  DASHBOARD_PORT: z.coerce.number().int().positive().default(3001),
+  DASHBOARD_INGEST_TOKEN: z.string().min(32, 'DASHBOARD_INGEST_TOKEN must be at least 32 chars'),
+  /** Set to "false" only for local http:// development; cookies are Secure otherwise. */
+  DASHBOARD_SECURE_COOKIES: z
+    .string()
+    .optional()
+    .transform((v) => v !== 'false'),
+  WP_TIMEOUT_MS: z.coerce.number().int().positive().default(30000),
+});
+
+export type DashboardEnv = z.output<typeof dashboardEnvSchema>;

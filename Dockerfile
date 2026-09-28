@@ -20,8 +20,8 @@ COPY --from=build /app/dist ./dist
 COPY package.json ./
 
 # node:22-alpine already provides a non-root "node" user (uid 1000).
-# /app/data holds the SQLite site store (mount a volume there).
-RUN mkdir -p /app/data /app/logs && chown -R node:node /app
+# /app/data holds the SQLite site store, /app/dashboard-data the dashboard DB (mount volumes).
+RUN mkdir -p /app/data /app/dashboard-data /app/logs && chown -R node:node /app
 USER node
 
 ENV SITES_DB=/app/data/sites.db

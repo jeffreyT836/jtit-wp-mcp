@@ -37,7 +37,8 @@ async function bridgeStatus(client: WpClient, site: ResolvedSite): Promise<Bridg
   }
 }
 
-async function checkSite(client: WpClient, site: ResolvedSite) {
+/** Verifies credentials (users/me), admin role and bridge status. Also used by the dashboard. */
+export async function checkSite(client: WpClient, site: ResolvedSite) {
   let ok = false;
   let user: { id: number; username: string; name?: string } | undefined;
   let roles: string[] = [];

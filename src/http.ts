@@ -91,6 +91,9 @@ export function createHttpApp(ctx: ToolContext): express.Express {
     const server = createServer(ctx);
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
+      // Plain JSON responses (allowed by the spec) so simple HTTP clients such as n8n can
+      // read results without parsing an SSE stream.
+      enableJsonResponse: true,
       enableDnsRebindingProtection: true,
       allowedHosts,
     });
