@@ -14,6 +14,7 @@ export interface AuthState {
 declare module 'express-serve-static-core' {
   interface Locals {
     auth?: AuthState;
+    nav?: import('../views/layout.js').NavData;
   }
 }
 

@@ -224,7 +224,7 @@ describe('dashboard update flow', () => {
     expect(page).toMatch(/value="premium\/premium.php"[^>]*disabled/);
     expect(page).toContain('Major-versie toestaan');
     expect(page).toContain('3 vertaling(en) bijwerken');
-    expect(page).toContain('src="/assets/app.js"');
+    expect(page).toContain('src="/assets/app.js?v=');
     expect(page).toMatch(/name="safe" checked/);
     expect(app.db.recentAudit().map((a) => a.action)).toContain('updates_checked');
   });

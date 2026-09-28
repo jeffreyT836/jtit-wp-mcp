@@ -118,6 +118,19 @@ describe('dashboard app', () => {
     expect((await fetch(`${base}/assets/app.css`)).headers.get('content-type')).toContain('text/css');
   });
 
+  it('serves content-versioned, long-cached assets and a logo', async () => {
+    const login = await (await fetch(`${base}/login`)).text();
+    const version = /href="\/assets\/app\.css\?v=([0-9a-f]{12})"/.exec(login)?.[1];
+    expect(version).toBeDefined();
+    expect(login).toContain(`src="/assets/app.js?v=${version}"`);
+    expect(login).toContain('class="logo-mark"');
+    const css = await fetch(`${base}/assets/app.css?v=${version}`);
+    expect(css.headers.get('cache-control')).toContain('immutable');
+    const logo = await fetch(`${base}/assets/logo.svg`);
+    expect(logo.headers.get('content-type')).toContain('image/svg+xml');
+    expect(await logo.text()).toContain('#FF005E');
+  });
+
   it('redirects anonymous users to login and rejects bad credentials generically', async () => {
     const browser = new Browser(base);
     expect((await browser.get('/')).headers.get('location')).toBe('/login');
@@ -265,6 +278,13 @@ describe('dashboard app', () => {
     const overview = await (await browser.get('/')).text();
     expect(overview).toContain('6.8.1');
     expect(overview).toContain('bereikbaar');
+    // Sidebar: every site with its status dot; tiles count up from real numbers.
+    expect(overview).toMatch(/class="nav-site"[^>]*href="\/sites\/klant-a"|href="\/sites\/klant-a"[^>]*>\s*<span class="dot ok"/);
+    expect(overview).toContain('data-count="1"');
+    const detail = await (await browser.get('/sites/klant-a')).text();
+    expect(detail).toMatch(/class="nav-site active" href="\/sites\/klant-a" aria-current="page"/);
+    expect(detail).toMatch(/<details class="panel" id="updates" data-persist="updates" open>/);
+    expect(detail).toMatch(/<details class="panel panel-danger" id="danger" data-persist="danger" >/);
     expect(await (await browser.get('/audit')).text()).toContain('totp_enrolled');
   });
 

@@ -26,7 +26,7 @@ export const clientIp = (req: Request): string => req.ip ?? 'unknown';
 /** Renders a page inside the layout, adding nav + CSRF when logged in. */
 export function renderPage(
   res: Response,
-  opts: Omit<LayoutOptions, 'user' | 'csrf'>,
+  opts: Omit<LayoutOptions, 'user' | 'csrf' | 'nav'>,
   status = 200,
 ): void {
   const auth = res.locals.auth;
@@ -39,6 +39,7 @@ export function renderPage(
         ...opts,
         user: full ? auth?.user.email : undefined,
         csrf: full ? auth?.session.csrf_token : undefined,
+        nav: full ? res.locals.nav : undefined,
       }),
     );
 }

@@ -6,7 +6,9 @@ import { authRoutes } from './routes/auth-routes.js';
 import { siteRoutes } from './routes/site-routes.js';
 import { updateRoutes } from './routes/update-routes.js';
 import { userRoutes } from './routes/user-routes.js';
-import { APP_CSS, APP_JS } from './views/styles.js';
+import { summarizeSite } from './snapshots.js';
+import { APP_CSS, APP_JS, FAVICON_SVG } from './views/assets.js';
+import type { NavData } from './views/layout.js';
 
 const CSP = [
   "default-src 'none'",
@@ -54,6 +56,29 @@ function sameOrigin(req: Request, res: Response, next: NextFunction): void {
   next();
 }
 
+/** Sidebar data (sites with status and open updates) for fully logged-in pages. */
+function navData(ctx: RouteContext) {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    if (res.locals.auth?.session.stage === 'full') {
+      const snapshots = ctx.db.latestSnapshots();
+      const sites = ctx.store.list().map((site) => {
+        const status = summarizeSite(snapshots.filter((s) => s.site_id === site.id));
+        const u = status.updates;
+        return {
+          id: site.id,
+          name: site.name,
+          state: !site.hasPassword || status.reachable === false ? ('error' as const) : status.reachable ? ('ok' as const) : ('unknown' as const),
+          updates: u ? u.core + u.plugins + u.themes : 0,
+        };
+      });
+      const nav: NavData = { path: req.path, sites };
+      res.locals.nav = nav;
+    }
+    next();
+  };
+}
+
+
 export function createDashboardApp(deps: DashboardDeps): express.Express {
   const app = express();
   const secure = deps.env.DASHBOARD_SECURE_COOKIES;
@@ -67,21 +92,21 @@ export function createDashboardApp(deps: DashboardDeps): express.Express {
   app.get('/healthz', (_req, res) => {
     res.json({ ok: true });
   });
-  app.get('/assets/app.css', (_req, res) => {
-    res.setHeader('Cache-Control', 'public, max-age=3600');
-    res.type('css').send(APP_CSS);
-  });
-
-  app.get('/assets/app.js', (_req, res) => {
-    res.setHeader('Cache-Control', 'public, max-age=3600');
-    res.type('js').send(APP_JS);
-  });
+  // Asset URLs carry a content hash (?v=), so they can be cached for a year.
+  const asset = (type: string, body: string) => (_req: Request, res: Response) => {
+    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    res.type(type).send(body);
+  };
+  app.get('/assets/app.css', asset('css', APP_CSS));
+  app.get('/assets/app.js', asset('js', APP_JS));
+  app.get('/assets/logo.svg', asset('svg', FAVICON_SVG));
 
   app.use('/api', apiRoutes(ctx));
 
   app.use(sameOrigin);
   app.use(express.urlencoded({ extended: false, limit: '64kb', parameterLimit: 500 }));
   app.use(ctx.sessions.load());
+  app.use(navData(ctx));
   app.use(authRoutes(ctx));
   app.use(updateRoutes(ctx));
   app.use(userRoutes(ctx));
