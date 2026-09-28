@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { WpError, sanitizeMessage } from '../wp/errors.js';
+import { BridgeFeatureMissingError } from '../wp/site-health.js';
 import { roleSlugSchema, usernameSchema, type NewUser } from '../wp/users.js';
 import { plainText } from './updates.js';
 
@@ -98,11 +99,19 @@ const USER_ERRORS: Record<string, string> = {
   rest_user_cannot_delete: 'De gekoppelde WordPress-gebruiker mag deze gebruiker niet verwijderen.',
   rest_cannot_delete: 'Deze gebruiker kan niet worden verwijderd (op multisite kan dat niet via de REST-API).',
   rest_user_invalid_reassign: 'De gebruiker om de inhoud aan toe te wijzen bestaat niet.',
-  rest_user_invalid_id: 'Deze gebruiker bestaat niet (meer).',
+  rest_user_invalid_id: 'Deze gebruiker bestaat niet (meer) op deze site.',
+  nb_mcp_invalid_network_username: 'Op een multisite mag een gebruikersnaam alleen kleine letters (a-z) en cijfers bevatten, minstens 4 tekens.',
+  nb_mcp_cannot_remove_self: 'Dit is de gebruiker waarmee het dashboard inlogt; die kan hier niet worden verwijderd.',
+  nb_mcp_site_not_found: 'Deze subsite bestaat niet (meer) in het netwerk.',
+  nb_mcp_not_multisite: 'Deze site is geen multisite.',
+  nb_mcp_forbidden: 'De gekoppelde WordPress-gebruiker heeft hier geen rechten voor (op multisite is een superbeheerder nodig).',
 };
 
 /** User-facing Dutch message for a failed user action. Never contains the password. */
 export function userErrorMessage(err: unknown): string {
+  if (err instanceof BridgeFeatureMissingError) {
+    return `De nb-mcp-bridge op deze site (versie ${err.version ?? 'onbekend'}) is te oud hiervoor. Werk hem bij naar 1.2.0.`;
+  }
   if (err instanceof WpError) return USER_ERRORS[err.code] ?? plainText(err.message);
   const message = err instanceof Error ? err.message : String(err);
   if (message.startsWith('refusing to delete the account')) {

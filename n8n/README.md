@@ -9,6 +9,7 @@ toont op https://wp-dashboard.jtit.nl.
 | Elk uur | `fleet_updates_report` | openstaande core/plugin/thema-updates (cache van WP) |
 | Dagelijks 06:00 | `fleet_updates_report` + `refresh: true` | laat elke site opnieuw naar updates zoeken |
 | Dagelijks 06:00 | `fleet_user_audit` (administrators) | alle admin-accounts per site (site-detailpagina) |
+| Dagelijks 06:00 | `fleet_site_health` | WordPress Site Health per site (vereist nb-mcp-bridge 1.2.0) |
 
 ```
 Elk uur ─────────► Tools (elk uur) ────┐

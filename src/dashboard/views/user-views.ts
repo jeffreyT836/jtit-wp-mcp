@@ -1,12 +1,23 @@
-import type { StoredSite } from '../../store/site-store.js';
 import type { RoleSummary, UserSummary } from '../../wp/users.js';
 import { MIN_PASSWORD_LENGTH, type NewUserFormValues } from '../users.js';
 import { alert, pageHead, panel } from './components.js';
-import { html } from './html.js';
+import { html, type SafeHtml } from './html.js';
 import { icon } from './icons.js';
 
 const fmtDate = (iso?: string) =>
   iso ? new Date(iso).toLocaleDateString('nl-NL', { timeZone: 'Europe/Amsterdam' }) : '—';
+
+/** Where the users live: a whole site, or one site of a multisite network. */
+export interface UserScopeView {
+  basePath: string;
+  title: string | SafeHtml;
+  eyebrow: string;
+  backHref: string;
+  backLabel: string;
+  /** Multisite: removing takes the user off this site only; usernames follow network rules. */
+  network: boolean;
+  readOnly: boolean;
+}
 
 export const emptyNewUser: NewUserFormValues = { username: '', email: '', role: 'subscriber', firstName: '', lastName: '' };
 
@@ -18,32 +29,39 @@ function roleNames(roles: RoleSummary[], slugs: string[]) {
   });
 }
 
-function deleteForm(csrf: string, site: StoredSite, user: UserSummary, users: UserSummary[], me?: UserSummary) {
+function deleteForm(csrf: string, scope: UserScopeView, user: UserSummary, users: UserSummary[], meId?: number) {
   const others = users.filter((u) => u.id !== user.id);
   if (others.length === 0) return html`<small>—</small>`;
-  const defaultTarget = me && me.id !== user.id ? me.id : others[0]!.id;
-  return html`<details class="delete-user"><summary>${icon('trash')} Verwijderen</summary>
-    <form method="post" action="/sites/${site.id}/users/${String(user.id)}/delete">
+  const defaultTarget = meId && meId !== user.id ? meId : others[0]!.id;
+  const verb = scope.network ? 'van deze site verwijderen' : 'definitief verwijderen';
+  return html`<details class="delete-user"><summary>${icon('trash')} ${scope.network ? 'Van site verwijderen' : 'Verwijderen'}</summary>
+    <form method="post" action="${scope.basePath}/${String(user.id)}/delete">
       <input type="hidden" name="_csrf" value="${csrf}">
       <label>Berichten en pagina's overdragen aan
         <select name="reassign">${others.map(
           (u) => html`<option value="${String(u.id)}" ${u.id === defaultTarget ? 'selected' : ''}>${u.username}${u.name && u.name !== u.username ? ` (${u.name})` : ''}</option>`,
         )}</select></label>
-      <label class="confirm"><input type="checkbox" name="confirm" required> ${user.username} definitief verwijderen</label>
-      <button type="submit" class="danger" data-busy="Gebruiker verwijderen…">${icon('trash')} Definitief verwijderen</button>
+      <label class="confirm"><input type="checkbox" name="confirm" required> ${user.username} ${verb}</label>
+      ${scope.network ? html`<small>Het account blijft in het netwerk bestaan.</small>` : null}
+      <button type="submit" class="danger" data-busy="Gebruiker verwijderen…">${icon('trash')} ${scope.network ? 'Van site verwijderen' : 'Definitief verwijderen'}</button>
     </form></details>`;
 }
 
-function createForm(csrf: string, site: StoredSite, roles: RoleSummary[], values: NewUserFormValues) {
+function createForm(csrf: string, scope: UserScopeView, roles: RoleSummary[], values: NewUserFormValues) {
   // Field names are not "username"/"password" so password managers don't fill in the
   // dashboard's own login; autocomplete=new-password lets them offer a generated one.
   const ignore = html`data-1p-ignore data-lpignore="true" data-bwignore data-form-type="other"`;
-  return html`<form method="post" action="/sites/${site.id}/users" autocomplete="off">
+  const usernameRule = scope.network
+    ? html`<small>(kleine letters en cijfers, minstens 4 — regel van WordPress-multisite)</small>
+        <input name="new_user_login" value="${values.username}" required minlength="4" maxlength="60" pattern="[a-z0-9]{4,60}"
+          autocomplete="off" spellcheck="false" ${ignore}>`
+    : html`<small>(letters, cijfers, _ . @ -)</small>
+        <input name="new_user_login" value="${values.username}" required maxlength="60" pattern="[A-Za-z0-9_.@\\-]+"
+          autocomplete="off" spellcheck="false" ${ignore}>`;
+  return html`<form method="post" action="${scope.basePath}" autocomplete="off">
     <input type="hidden" name="_csrf" value="${csrf}">
     <div class="grid">
-      <label>Gebruikersnaam <small>(letters, cijfers, _ . @ -)</small>
-        <input name="new_user_login" value="${values.username}" required maxlength="60" pattern="[A-Za-z0-9_.@\\-]+"
-          autocomplete="off" spellcheck="false" ${ignore}></label>
+      <label>Gebruikersnaam ${usernameRule}</label>
       <label>E-mailadres <input name="new_user_email" type="email" value="${values.email}" required maxlength="100" autocomplete="off" ${ignore}></label>
       <label>Voornaam <small>(optioneel)</small><input name="new_user_first" value="${values.firstName}" maxlength="100" autocomplete="off" ${ignore}></label>
       <label>Achternaam <small>(optioneel)</small><input name="new_user_last" value="${values.lastName}" maxlength="100" autocomplete="off" ${ignore}></label>
@@ -67,43 +85,43 @@ function createForm(csrf: string, site: StoredSite, roles: RoleSummary[], values
 
 export function usersPage(opts: {
   csrf: string;
-  site: StoredSite;
+  scope: UserScopeView;
   users?: UserSummary[];
   roles?: RoleSummary[];
-  me?: UserSummary;
+  meId?: number;
   loadError?: string;
   formError?: string;
   values?: NewUserFormValues;
 }) {
-  const { csrf, site, users = [], roles = [], me, loadError, formError, values = emptyNewUser } = opts;
-  const canWrite = !site.readOnly && !loadError;
+  const { csrf, scope, users = [], roles = [], meId, loadError, formError, values = emptyNewUser } = opts;
+  const canWrite = !scope.readOnly && !loadError;
   const list = loadError
     ? alert('error', `Gebruikers ophalen mislukt: ${loadError}`)
     : html`<div class="table-wrap"><table>
     <thead><tr><th>Gebruikersnaam</th><th>Naam</th><th>E-mail</th><th>Rol</th><th>Geregistreerd</th>${canWrite ? html`<th></th>` : null}</tr></thead>
     <tbody>${users.map(
       (u) => html`<tr>
-        <td><strong>${u.username}</strong>${me?.id === u.id ? html` <span class="tag">koppeling dashboard</span>` : null}</td>
+        <td><strong>${u.username}</strong>${meId === u.id ? html` <span class="tag">koppeling dashboard</span>` : null}${(u as { super_admin?: boolean }).super_admin ? html` <span class="tag">superbeheerder</span>` : null}</td>
         <td>${u.name ?? '—'}</td>
         <td>${u.email ?? '—'}</td>
         <td>${roleNames(roles, u.roles)}</td>
         <td><small>${fmtDate(u.registered_date)}</small></td>
-        ${canWrite ? html`<td class="row-actions">${me?.id === u.id ? html`<small>niet verwijderbaar</small>` : deleteForm(csrf, site, u, users, me)}</td>` : null}
+        ${canWrite ? html`<td class="row-actions">${meId === u.id ? html`<small>niet verwijderbaar</small>` : deleteForm(csrf, scope, u, users, meId)}</td>` : null}
       </tr>`,
     )}</tbody></table></div>`;
   return html`
-${pageHead(html`Gebruikers: ${site.name}`, {
-  eyebrow: site.id,
-  sub: 'Live opgehaald uit WordPress.',
+${pageHead(scope.title, {
+  eyebrow: scope.eyebrow,
+  sub: scope.network ? 'Live opgehaald uit WordPress (multisite: gebruikers van deze site).' : 'Live opgehaald uit WordPress.',
   actions: html`${canWrite ? html`<a class="button" href="#nieuw">${icon('plus')} Nieuwe gebruiker</a>` : null}
-    <a class="button secondary" href="/sites/${site.id}">Terug naar de site</a>`,
+    <a class="button secondary" href="${scope.backHref}">${scope.backLabel}</a>`,
 })}
-${site.readOnly ? alert('warn', 'Deze site staat op "alleen lezen"; aanmaken en verwijderen is uitgeschakeld.') : null}
+${scope.readOnly ? alert('warn', 'Deze site staat op "alleen lezen"; aanmaken en verwijderen is uitgeschakeld.') : null}
 ${panel({ id: 'users', title: 'Gebruikers', icon: 'users', meta: loadError ? null : `(${users.length})`, open: true, body: list })}
 ${canWrite
   ? panel({
       id: 'nieuw', title: 'Gebruiker aanmaken', icon: 'plus', open: Boolean(formError),
-      body: html`${formError ? alert('error', formError) : null}${createForm(csrf, site, roles, values)}`,
+      body: html`${formError ? alert('error', formError) : null}${createForm(csrf, scope, roles, values)}`,
     })
   : null}`;
 }

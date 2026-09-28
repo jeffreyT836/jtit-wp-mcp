@@ -69,6 +69,34 @@ because older bridges silently ignore `safe`.
 
 End-to-end test against a real WordPress in Docker: `tests/wordpress-e2e/run.sh`.
 
+## Site Health (1.2.0+)
+
+`GET /site-health` runs every WordPress Site Health test server-side (the direct
+tests plus the direct variant of the async ones, like WP-admin → Tools → Site
+Health → Status) and returns `{ checked_at, summary: {critical, recommended,
+good}, tests: [...], info }`. Descriptions are plain text; `actions` only
+contains http(s) links. `info` is a deliberately limited subset of the Info
+tab: versions, PHP/WordPress limits, HTTPS, object cache, cron — never file
+paths, database credentials or constants. `?include_sizes=1` adds directory
+and database sizes (slow on large sites). Capability: `view_site_health_checks`
+or `manage_options`.
+
+## Multisite networks (1.2.0+)
+
+| Route | Capability | |
+| --- | --- | --- |
+| `GET /network/sites` | `manage_sites` (single site: `manage_options`) | all sites in the network; `{multisite:false}` on a single site |
+| `GET /network/sites/{blog_id}` | same | name, url, admin email, theme, active plugins (incl. network-wide), post/page/user counts |
+| `GET /network/sites/{blog_id}/roles` | `manage_network_users` | roles of that site |
+| `GET /network/sites/{blog_id}/users` | `manage_network_users` | users of that site + `me` |
+| `POST /network/sites/{blog_id}/users` | `manage_network_users` | creates a network user and adds it to the site (`username` 4–60 × a-z0-9, `email`, `password`, `role`, `first_name`, `last_name`); the password is never returned |
+| `POST /network/sites/{blog_id}/users/{user_id}/remove` | `manage_network_users` | removes the user from that site (the account stays) and reassigns their content to `reassign`; refuses the requesting account |
+
+The Application Password user must be a **super admin** for these routes.
+`GET /status` lists `features: ["safe_updates", "site_health", "network"]` and
+`main_site_id`. End-to-end test against a real multisite:
+`tests/wordpress-e2e/run-network.sh`.
+
 ## Caching (Kinsta, Cloudflare, other CDNs)
 
 Since 1.0.7 every `nb-mcp/v1` response (including errors) is sent with

@@ -57,7 +57,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// n8n-expressies mogen het woord `arguments` niet gebruiken, dus de complete\n// JSON-RPC-body voor de MCP wordt hier (in de Code-node) opgebouwd.\nconst call = (tool, args = {}) => ({\n  json: { kind: tool, body: { jsonrpc: '2.0', id: tool, method: 'tools/call', params: { name: tool, arguments: args } } },\n});\n\n// Dagelijks: WordPress opnieuw laten zoeken naar updates (refresh) en\n// een audit van alle administrator-accounts over de hele vloot.\nreturn [\n  call('fleet_updates_report', { refresh: true }),\n  call('fleet_user_audit', { role: 'administrator' }),\n];"
+        "jsCode": "// n8n-expressies mogen het woord `arguments` niet gebruiken, dus de complete\n// JSON-RPC-body voor de MCP wordt hier (in de Code-node) opgebouwd.\nconst call = (tool, args = {}) => ({\n  json: { kind: tool, body: { jsonrpc: '2.0', id: tool, method: 'tools/call', params: { name: tool, arguments: args } } },\n});\n\n// Dagelijks: WordPress opnieuw laten zoeken naar updates (refresh), een audit van\n// alle administrator-accounts en WordPress Site Health over de hele vloot.\nreturn [\n  call('fleet_updates_report', { refresh: true }),\n  call('fleet_user_audit', { role: 'administrator' }),\n  call('fleet_site_health'),\n];"
       },
       "id": "a1f0c7a2-0007-4a6e-9a01-000000000007",
       "name": "Tools (dagelijks)",

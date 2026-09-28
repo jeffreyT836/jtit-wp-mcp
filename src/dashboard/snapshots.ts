@@ -52,6 +52,10 @@ export interface SiteStatus {
   error?: string;
   updates?: { core: number; plugins: number; themes: number };
   updatesError?: string;
+  /** From the bridge status in `fleet_health`. */
+  multisite?: boolean;
+  health?: { critical: number; recommended: number; good: number };
+  healthError?: string;
 }
 
 type Json = Record<string, unknown>;
@@ -80,10 +84,12 @@ export function summarizeSite(snapshots: SnapshotRow[]): SiteStatus {
       status.reachable = parsed.ok === true && data?.ok === true;
       const roles = Array.isArray(data?.roles) ? (data.roles as unknown[]) : [];
       status.isAdmin = roles.includes('administrator');
-      status.bridge = str(data?.bridge);
       const versions = obj(data?.versions);
+      // Prefer the bridge version (tells whether an upgrade is due) over the plain state.
+      status.bridge = str(versions?.bridge_version) ?? str(data?.bridge);
       status.wpVersion = str(versions?.wp_version);
       status.phpVersion = str(versions?.php_version);
+      if (typeof versions?.multisite === 'boolean') status.multisite = versions.multisite;
       const error = str(data?.error) ?? str(parsed.error);
       status.error = error ? stripTags(error) : undefined;
     } else if (snap.kind === 'fleet_updates_report') {
@@ -96,6 +102,14 @@ export function summarizeSite(snapshots: SnapshotRow[]): SiteStatus {
         ? (data.core as unknown[]).filter((c) => obj(c)?.response === 'upgrade').length
         : 0;
       status.updates = { core, plugins: len(data.plugins), themes: len(data.themes) };
+    } else if (snap.kind === 'fleet_site_health') {
+      const summary = obj(data?.summary);
+      if (parsed.ok !== true || !summary) {
+        status.healthError = stripTags(str(parsed.error) ?? 'onbekende fout');
+        continue;
+      }
+      const n = (v: unknown) => (typeof v === 'number' ? v : 0);
+      status.health = { critical: n(summary.critical), recommended: n(summary.recommended), good: n(summary.good) };
     }
   }
   return status;

@@ -8,6 +8,7 @@ export interface NavSite {
   name: string;
   state: DotState;
   updates: number;
+  multisite?: boolean;
 }
 
 export interface NavData {
@@ -42,6 +43,8 @@ function siteLinks(nav: NavData): SafeHtml {
       ${active
         ? html`<div class="nav-sub">
             <a href="${base}#updates">Updates</a>
+            <a href="${base}#health">Site Health</a>
+            ${site.multisite ? html`<a href="${base}/network" class="${nav.path.startsWith(`${base}/network`) ? 'active' : ''}">Multisite</a>` : null}
             <a href="${base}/users" class="${nav.path === `${base}/users` ? 'active' : ''}">Gebruikers</a>
             <a href="${base}/edit" class="${nav.path === `${base}/edit` ? 'active' : ''}">Bewerken</a>
           </div>`

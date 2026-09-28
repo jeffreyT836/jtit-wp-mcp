@@ -106,4 +106,10 @@ wp option delete nb_e2e_break_front >/dev/null
 echo "==> no backup directories left behind"
 [ "$(backups)" = "0" ] || fail "backups left"
 
+echo "==> site health on a single site"
+H=$(api GET /site-health)
+[ "$(echo "$H" | jqn 'd.tests.length > 10 && d.info.multisite === false')" = "true" ] || fail "site health: $(echo "$H" | head -c 300)"
+[ "$(api GET /network/sites | jqn 'd.multisite === false && d.sites.length === 0')" = "true" ] || fail "network/sites on single site"
+[ "$(api GET /network/sites/1 | jqn 'd.code')" = "nb_mcp_not_multisite" ] || fail "network detail on single site"
+
 echo "ALL E2E CHECKS PASSED"

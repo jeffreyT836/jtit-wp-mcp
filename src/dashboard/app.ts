@@ -6,6 +6,7 @@ import { authRoutes } from './routes/auth-routes.js';
 import { siteRoutes } from './routes/site-routes.js';
 import { updateRoutes } from './routes/update-routes.js';
 import { userRoutes } from './routes/user-routes.js';
+import { networkRoutes } from './routes/network-routes.js';
 import { summarizeSite } from './snapshots.js';
 import { APP_CSS, APP_JS, FAVICON_SVG } from './views/assets.js';
 import type { NavData } from './views/layout.js';
@@ -69,6 +70,7 @@ function navData(ctx: RouteContext) {
           name: site.name,
           state: !site.hasPassword || status.reachable === false ? ('error' as const) : status.reachable ? ('ok' as const) : ('unknown' as const),
           updates: u ? u.core + u.plugins + u.themes : 0,
+          multisite: status.multisite === true,
         };
       });
       const nav: NavData = { path: req.path, sites };
@@ -110,6 +112,7 @@ export function createDashboardApp(deps: DashboardDeps): express.Express {
   app.use(authRoutes(ctx));
   app.use(updateRoutes(ctx));
   app.use(userRoutes(ctx));
+  app.use(networkRoutes(ctx));
   app.use(siteRoutes(ctx));
 
   app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {

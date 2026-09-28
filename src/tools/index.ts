@@ -8,6 +8,7 @@ import * as users from './users.js';
 import * as content from './content.js';
 import * as settings from './settings.js';
 import * as fleet from './fleet.js';
+import * as network from './network.js';
 
 /** Calls `register(server, ctx)` on every tool module. See SPEC.md §3. */
 export function registerAllTools(server: McpServer, ctx: ToolContext): void {
@@ -19,4 +20,5 @@ export function registerAllTools(server: McpServer, ctx: ToolContext): void {
   content.register(server, ctx);
   settings.register(server, ctx);
   fleet.register(server, ctx);
+  network.register(server, ctx);
 }

@@ -9,6 +9,8 @@ import { renderPage, type RouteContext } from '../context.js';
 import { summarizeSite } from '../snapshots.js';
 import { latestUpdates, plainText } from '../updates.js';
 import { updatesSection } from '../views/update-views.js';
+import { latestHealth } from '../health.js';
+import { healthSection } from '../views/health-views.js';
 import type { StoredSite } from '../../store/site-store.js';
 import {
   auditPage,
@@ -75,6 +77,7 @@ export function renderSiteDetail(
       status: summarizeSite(snapshots),
       snapshots,
       updates: updatesSection({ csrf, site, snapshot: latestUpdates(snapshots) }),
+      health: healthSection({ csrf, site, snapshot: latestHealth(snapshots) }),
       audit: ctx.db.recentAudit(500).filter((a) => a.target === site.id).slice(0, 20),
     }),
   }, status);
@@ -185,7 +188,9 @@ export function siteRoutes(ctx: RouteContext): Router {
         : { kind: 'ok' as const, message: 'Site opgeslagen en verbinding getest.' }
       : req.query.refreshed
         ? { kind: 'ok' as const, message: 'Updates opnieuw gecontroleerd.' }
-        : undefined;
+        : req.query.health
+          ? { kind: 'ok' as const, message: 'Site Health opnieuw gecontroleerd.' }
+          : undefined;
     renderSiteDetail(ctx, res, site, flash);
   });
 

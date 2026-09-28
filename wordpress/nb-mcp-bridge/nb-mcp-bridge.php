@@ -5,7 +5,7 @@
  * Description:       Companion mu-plugin for wp-fleet-mcp. Exposes REST endpoints
  *                     (namespace nb-mcp/v1) for status, update management and role
  *                     information that WordPress core REST does not provide.
- * Version:           1.1.0
+ * Version:           1.2.0
  * Requires at least: 6.0
  * Requires PHP:      7.4
  * Author:            wp-fleet-mcp
@@ -18,7 +18,7 @@
 defined( 'ABSPATH' ) || exit;
 
 // Reported by GET /nb-mcp/v1/status; keep in sync with the "Version" header above.
-define( 'NB_MCP_BRIDGE_VERSION', '1.1.0' );
+define( 'NB_MCP_BRIDGE_VERSION', '1.2.0' );
 
 /**
  * Register all nb-mcp/v1 REST routes.
@@ -330,11 +330,12 @@ function nb_mcp_bridge_get_status() {
 
 	$response = array(
 		'bridge_version' => NB_MCP_BRIDGE_VERSION,
-		'features'       => array( 'safe_updates' ),
+		'features'       => array( 'safe_updates', 'site_health', 'network' ),
 		'wp_version'     => get_bloginfo( 'version' ),
 		'php_version'    => PHP_VERSION,
 		'mysql_version'  => is_callable( array( $wpdb, 'db_version' ) ) ? $wpdb->db_version() : '',
 		'multisite'      => is_multisite(),
+		'main_site_id'   => is_multisite() ? (int) get_main_site_id() : null,
 		'site_url'       => site_url(),
 		'home_url'       => home_url(),
 		'is_ssl'         => is_ssl(),
@@ -1834,3 +1835,585 @@ function nb_mcp_bridge_cleanup_old_backups() {
 }
 add_action( 'nb_mcp_bridge_cleanup_backups', 'nb_mcp_bridge_cleanup_old_backups' );
 
+
+/* -------------------------------------------------------------------------
+ * 1.2.0: Site Health and multisite networks.
+ * ---------------------------------------------------------------------- */
+
+/**
+ * Register the Site Health and multisite routes.
+ */
+function nb_mcp_bridge_register_health_and_network_routes() {
+	$blog_arg = array(
+		'blog_id' => array(
+			'type'              => 'integer',
+			'required'          => true,
+			'minimum'           => 1,
+			'sanitize_callback' => 'absint',
+		),
+	);
+
+	register_rest_route( 'nb-mcp/v1', '/site-health', array(
+		'methods'             => WP_REST_Server::READABLE,
+		'callback'            => 'nb_mcp_bridge_get_site_health',
+		'permission_callback' => nb_mcp_bridge_permission_callback( array( 'view_site_health_checks', 'manage_options' ) ),
+		'args'                => array(
+			'include_sizes' => array(
+				'type'              => 'boolean',
+				'required'          => false,
+				'default'           => false,
+				'sanitize_callback' => 'rest_sanitize_boolean',
+			),
+		),
+	) );
+
+	// manage_sites only exists on multisite; a single site answers "not a network" to its admins.
+	$sites_cap = is_multisite() ? 'manage_sites' : 'manage_options';
+
+	register_rest_route( 'nb-mcp/v1', '/network/sites', array(
+		'methods'             => WP_REST_Server::READABLE,
+		'callback'            => 'nb_mcp_bridge_get_network_sites',
+		'permission_callback' => nb_mcp_bridge_permission_callback( $sites_cap ),
+	) );
+
+	register_rest_route( 'nb-mcp/v1', '/network/sites/(?P<blog_id>\d+)', array(
+		'methods'             => WP_REST_Server::READABLE,
+		'callback'            => 'nb_mcp_bridge_get_network_site',
+		'permission_callback' => nb_mcp_bridge_permission_callback( $sites_cap ),
+		'args'                => $blog_arg,
+	) );
+
+	register_rest_route( 'nb-mcp/v1', '/network/sites/(?P<blog_id>\d+)/roles', array(
+		'methods'             => WP_REST_Server::READABLE,
+		'callback'            => 'nb_mcp_bridge_get_network_site_roles',
+		'permission_callback' => nb_mcp_bridge_permission_callback( 'manage_network_users' ),
+		'args'                => $blog_arg,
+	) );
+
+	register_rest_route( 'nb-mcp/v1', '/network/sites/(?P<blog_id>\d+)/users', array(
+		array(
+			'methods'             => WP_REST_Server::READABLE,
+			'callback'            => 'nb_mcp_bridge_get_network_site_users',
+			'permission_callback' => nb_mcp_bridge_permission_callback( 'manage_network_users' ),
+			'args'                => $blog_arg,
+		),
+		array(
+			'methods'             => WP_REST_Server::CREATABLE,
+			'callback'            => 'nb_mcp_bridge_create_network_site_user',
+			'permission_callback' => nb_mcp_bridge_permission_callback( 'manage_network_users' ),
+			'args'                => array_merge( $blog_arg, array(
+				'username'   => array( 'type' => 'string', 'required' => true ),
+				// Never sanitized: sanitize_text_field() would silently alter the password.
+				'password'   => array( 'type' => 'string', 'required' => true ),
+				'email'      => array( 'type' => 'string', 'required' => true ),
+				'role'       => array( 'type' => 'string', 'required' => true, 'sanitize_callback' => 'sanitize_key' ),
+				'first_name' => array( 'type' => 'string', 'required' => false, 'default' => '', 'sanitize_callback' => 'sanitize_text_field' ),
+				'last_name'  => array( 'type' => 'string', 'required' => false, 'default' => '', 'sanitize_callback' => 'sanitize_text_field' ),
+			) ),
+		),
+	) );
+
+	register_rest_route( 'nb-mcp/v1', '/network/sites/(?P<blog_id>\d+)/users/(?P<user_id>\d+)/remove', array(
+		'methods'             => WP_REST_Server::CREATABLE,
+		'callback'            => 'nb_mcp_bridge_remove_network_site_user',
+		'permission_callback' => nb_mcp_bridge_permission_callback( 'manage_network_users' ),
+		'args'                => array_merge( $blog_arg, array(
+			'user_id'  => array( 'type' => 'integer', 'required' => true, 'minimum' => 1, 'sanitize_callback' => 'absint' ),
+			'reassign' => array( 'type' => 'integer', 'required' => true, 'minimum' => 1, 'sanitize_callback' => 'absint' ),
+		) ),
+	) );
+}
+add_action( 'rest_api_init', 'nb_mcp_bridge_register_health_and_network_routes' );
+
+/**
+ * Turns Site Health HTML (descriptions, actions) into plain text with paragraph breaks.
+ *
+ * @param string $html Markup from a Site Health test.
+ * @return string
+ */
+function nb_mcp_bridge_health_text( $html ) {
+	// Screen-reader-only hints ("Error", "(opens in a new tab)") are noise as plain text.
+	$text = preg_replace( '#<span[^>]*class=(["\'])[^"\']*screen-reader-text[^"\']*\1[^>]*>.*?</span>#is', '', (string) $html );
+	$text = preg_replace( '#<\s*(br|/p|/li|/h[1-6])[^>]*>#i', "\n", $text );
+	$text = html_entity_decode( wp_strip_all_tags( $text ), ENT_QUOTES, 'UTF-8' );
+	$lines = array_filter( array_map( 'trim', preg_split( "/\n+/", $text ) ), 'strlen' );
+	return implode( "\n", $lines );
+}
+
+/**
+ * Extracts http(s) links from a Site Health "actions" snippet.
+ *
+ * @param string $html Actions markup.
+ * @return array<int, array{label: string, url: string}>
+ */
+function nb_mcp_bridge_health_links( $html ) {
+	$links = array();
+	if ( preg_match_all( '#<a\s[^>]*href=(["\'])(.*?)\1[^>]*>(.*?)</a>#is', (string) $html, $matches, PREG_SET_ORDER ) ) {
+		foreach ( $matches as $match ) {
+			$url = esc_url_raw( html_entity_decode( $match[2], ENT_QUOTES, 'UTF-8' ), array( 'http', 'https' ) );
+			$label = trim( nb_mcp_bridge_health_text( $match[3] ) );
+			if ( $url && '' !== $label ) {
+				$links[] = array( 'label' => $label, 'url' => $url );
+			}
+		}
+	}
+	return array_slice( $links, 0, 5 );
+}
+
+/**
+ * Runs one Site Health test (direct, or the direct variant of an async test).
+ *
+ * @param WP_Site_Health $health The Site Health instance.
+ * @param string         $key    Test key.
+ * @param array          $test   Test definition from WP_Site_Health::get_tests().
+ * @param string         $type   'direct' or 'async'.
+ * @return array|null Normalized result, or null when the test cannot run server-side.
+ */
+function nb_mcp_bridge_run_health_test( $health, $key, $test, $type ) {
+	$callback = null;
+	$name     = isset( $test['test'] ) ? $test['test'] : null;
+	if ( 'async' === $type && ! empty( $test['async_direct_test'] ) && is_callable( $test['async_direct_test'] ) ) {
+		$callback = $test['async_direct_test'];
+	} elseif ( is_string( $name ) && method_exists( $health, 'get_test_' . $name ) ) {
+		$callback = array( $health, 'get_test_' . $name );
+	} elseif ( 'direct' === $type && is_callable( $name ) ) {
+		$callback = $name;
+	}
+	if ( null === $callback ) {
+		return null;
+	}
+
+	$label = isset( $test['label'] ) ? wp_strip_all_tags( $test['label'] ) : $key;
+	try {
+		$result = call_user_func( $callback );
+	} catch ( Throwable $e ) {
+		return array(
+			'test'        => $key,
+			'label'       => $label,
+			'status'      => 'recommended',
+			'badge'       => array( 'label' => '', 'color' => '' ),
+			'description' => 'Deze test kon niet worden uitgevoerd: ' . wp_strip_all_tags( $e->getMessage() ),
+			'actions'     => array(),
+		);
+	}
+	if ( ! is_array( $result ) ) {
+		return null;
+	}
+	$result = apply_filters( 'site_status_test_result', $result );
+	$status = isset( $result['status'] ) && in_array( $result['status'], array( 'good', 'recommended', 'critical' ), true )
+		? $result['status']
+		: 'recommended';
+
+	return array(
+		'test'        => isset( $result['test'] ) ? sanitize_key( $result['test'] ) : $key,
+		'label'       => isset( $result['label'] ) ? nb_mcp_bridge_health_text( $result['label'] ) : $label,
+		'status'      => $status,
+		'badge'       => array(
+			'label' => isset( $result['badge']['label'] ) ? wp_strip_all_tags( $result['badge']['label'] ) : '',
+			'color' => isset( $result['badge']['color'] ) ? sanitize_key( $result['badge']['color'] ) : '',
+		),
+		'description' => isset( $result['description'] ) ? nb_mcp_bridge_health_text( $result['description'] ) : '',
+		'actions'     => isset( $result['actions'] ) ? nb_mcp_bridge_health_links( $result['actions'] ) : array(),
+	);
+}
+
+/**
+ * "MariaDB 10.6.12" / "MySQL 8.0.36" from a server banner such as
+ * "5.5.5-10.6.12-MariaDB-0ubuntu0.22.04.1", without OS or distribution details.
+ *
+ * @param string $banner Raw server info.
+ * @return string
+ */
+function nb_mcp_bridge_db_product( $banner ) {
+	$product = false !== stripos( $banner, 'mariadb' ) ? 'MariaDB' : 'MySQL';
+	$banner  = preg_replace( '/^5\.5\.5-/', '', $banner ); // MariaDB's replication-compat prefix.
+	return preg_match( '/(\d+\.\d+(?:\.\d+)?)/', $banner, $m ) ? $product . ' ' . $m[1] : $product;
+}
+
+/**
+ * A limited, non-sensitive subset of the Site Health "Info" tab: versions and limits,
+ * no file paths, database credentials or constants.
+ *
+ * @param bool $include_sizes Also compute directory and database sizes (slow on big sites).
+ * @return array
+ */
+function nb_mcp_bridge_health_info( $include_sizes ) {
+	global $wpdb;
+
+	$active_plugins = (array) get_option( 'active_plugins', array() );
+	if ( is_multisite() ) {
+		$active_plugins = array_unique( array_merge( $active_plugins, array_keys( (array) get_site_option( 'active_sitewide_plugins', array() ) ) ) );
+	}
+	$overdue = 0;
+	if ( function_exists( '_get_cron_array' ) ) {
+		foreach ( (array) _get_cron_array() as $timestamp => $hooks ) {
+			if ( (int) $timestamp < time() - 10 * MINUTE_IN_SECONDS ) {
+				$overdue += count( (array) $hooks );
+			}
+		}
+	}
+	$theme = wp_get_theme();
+
+	$info = array(
+		'wp_version'          => get_bloginfo( 'version' ),
+		'php_version'         => PHP_VERSION,
+		// Only product + version: the raw banner can include OS/distribution details.
+		'db_server'           => method_exists( $wpdb, 'db_server_info' ) ? nb_mcp_bridge_db_product( (string) $wpdb->db_server_info() ) : '',
+		'db_version'          => method_exists( $wpdb, 'db_version' ) ? (string) $wpdb->db_version() : '',
+		'memory_limit'        => (string) ini_get( 'memory_limit' ),
+		'wp_memory_limit'     => defined( 'WP_MEMORY_LIMIT' ) ? WP_MEMORY_LIMIT : '',
+		'max_execution_time'  => (string) ini_get( 'max_execution_time' ),
+		'upload_max_filesize' => (string) ini_get( 'upload_max_filesize' ),
+		'post_max_size'       => (string) ini_get( 'post_max_size' ),
+		'https'               => function_exists( 'wp_is_using_https' ) ? wp_is_using_https() : is_ssl(),
+		'object_cache'        => (bool) wp_using_ext_object_cache(),
+		'wp_cron_disabled'    => defined( 'DISABLE_WP_CRON' ) && DISABLE_WP_CRON,
+		'cron_overdue'        => $overdue,
+		'environment_type'    => function_exists( 'wp_get_environment_type' ) ? wp_get_environment_type() : 'production',
+		'multisite'           => is_multisite(),
+		'language'            => get_locale(),
+		'timezone'            => function_exists( 'wp_timezone_string' ) ? wp_timezone_string() : '',
+		'theme'               => $theme->get( 'Name' ) . ' ' . $theme->get( 'Version' ),
+		'plugins_active'      => count( $active_plugins ),
+		'plugins_total'       => count( get_plugins() ),
+		'mu_plugins'          => count( get_mu_plugins() ),
+		'image_editor'        => extension_loaded( 'imagick' ) ? 'Imagick' : ( extension_loaded( 'gd' ) ? 'GD' : '' ),
+	);
+
+	if ( $include_sizes && class_exists( 'WP_Debug_Data' ) && method_exists( 'WP_Debug_Data', 'get_sizes' ) ) {
+		try {
+			$sizes = array();
+			foreach ( (array) WP_Debug_Data::get_sizes() as $key => $entry ) {
+				$sizes[ sanitize_key( $key ) ] = array(
+					'size' => isset( $entry['size'] ) ? wp_strip_all_tags( (string) $entry['size'] ) : '',
+					'raw'  => isset( $entry['raw'] ) && is_numeric( $entry['raw'] ) ? (int) $entry['raw'] : null,
+				);
+			}
+			$info['sizes'] = $sizes;
+		} catch ( Throwable $e ) {
+			$info['sizes_error'] = wp_strip_all_tags( $e->getMessage() );
+		}
+	}
+
+	return $info;
+}
+
+/**
+ * GET /nb-mcp/v1/site-health
+ *
+ * Runs every Site Health test server-side (direct tests plus the direct variant of the
+ * async tests), like the "Status" tab in WP-admin, and returns the results as plain text.
+ */
+function nb_mcp_bridge_get_site_health( WP_REST_Request $request ) {
+	if ( function_exists( 'set_time_limit' ) ) {
+		@set_time_limit( 120 ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+	}
+	require_once ABSPATH . 'wp-admin/includes/admin.php';
+	if ( ! class_exists( 'WP_Site_Health' ) ) {
+		require_once ABSPATH . 'wp-admin/includes/class-wp-site-health.php';
+	}
+	if ( ! class_exists( 'WP_Debug_Data' ) && file_exists( ABSPATH . 'wp-admin/includes/class-wp-debug-data.php' ) ) {
+		require_once ABSPATH . 'wp-admin/includes/class-wp-debug-data.php';
+	}
+
+	$health  = WP_Site_Health::get_instance();
+	$tests   = WP_Site_Health::get_tests();
+	$results = array();
+	foreach ( array( 'direct', 'async' ) as $type ) {
+		foreach ( (array) ( isset( $tests[ $type ] ) ? $tests[ $type ] : array() ) as $key => $test ) {
+			$row = nb_mcp_bridge_run_health_test( $health, $key, (array) $test, $type );
+			if ( null !== $row ) {
+				$results[] = $row;
+			}
+		}
+	}
+
+	$order = array( 'critical' => 0, 'recommended' => 1, 'good' => 2 );
+	usort( $results, static function ( $a, $b ) use ( $order ) {
+		return $order[ $a['status'] ] - $order[ $b['status'] ];
+	} );
+	$summary = array( 'critical' => 0, 'recommended' => 0, 'good' => 0 );
+	foreach ( $results as $row ) {
+		$summary[ $row['status'] ]++;
+	}
+
+	return rest_ensure_response( array(
+		'checked_at' => gmdate( 'c' ),
+		'summary'    => $summary,
+		'tests'      => $results,
+		'info'       => nb_mcp_bridge_health_info( (bool) $request->get_param( 'include_sizes' ) ),
+	) );
+}
+
+/**
+ * Returns the WP_Site for a blog id in the current network, or a WP_Error.
+ *
+ * @param int $blog_id Blog id.
+ * @return WP_Site|WP_Error
+ */
+function nb_mcp_bridge_network_site_or_error( $blog_id ) {
+	if ( ! is_multisite() ) {
+		return new WP_Error( 'nb_mcp_not_multisite', __( 'This site is not a multisite network.', 'nb-mcp-bridge' ), array( 'status' => 404 ) );
+	}
+	$site = get_site( (int) $blog_id );
+	if ( ! $site || (int) $site->network_id !== (int) get_current_network_id() ) {
+		return new WP_Error( 'nb_mcp_site_not_found', __( 'No site with this id exists in this network.', 'nb-mcp-bridge' ), array( 'status' => 404 ) );
+	}
+	return $site;
+}
+
+/**
+ * Normalized row for a network site.
+ *
+ * @param WP_Site $site Site.
+ * @return array
+ */
+function nb_mcp_bridge_network_site_row( $site ) {
+	return array(
+		'blog_id'      => (int) $site->blog_id,
+		'name'         => (string) $site->blogname,
+		'url'          => (string) $site->home,
+		'domain'       => (string) $site->domain,
+		'path'         => (string) $site->path,
+		'registered'   => (string) $site->registered,
+		'last_updated' => (string) $site->last_updated,
+		'public'       => (bool) (int) $site->public,
+		'archived'     => (bool) (int) $site->archived,
+		'deleted'      => (bool) (int) $site->deleted,
+		'spam'         => (bool) (int) $site->spam,
+		'is_main'      => is_main_site( (int) $site->blog_id ),
+	);
+}
+
+/**
+ * GET /nb-mcp/v1/network/sites
+ */
+function nb_mcp_bridge_get_network_sites() {
+	if ( ! is_multisite() ) {
+		return rest_ensure_response( array( 'multisite' => false, 'network' => null, 'total' => 0, 'sites' => array() ) );
+	}
+	$network = get_network();
+	$args    = array( 'network_id' => get_current_network_id() );
+	$sites   = get_sites( array_merge( $args, array( 'number' => 500, 'orderby' => 'id' ) ) );
+
+	return rest_ensure_response( array(
+		'multisite' => true,
+		'network'   => array(
+			'name'         => $network ? (string) $network->site_name : '',
+			'domain'       => $network ? (string) $network->domain : '',
+			'main_site_id' => (int) get_main_site_id(),
+		),
+		'total'     => (int) get_sites( array_merge( $args, array( 'count' => true ) ) ),
+		'sites'     => array_map( 'nb_mcp_bridge_network_site_row', $sites ),
+	) );
+}
+
+/**
+ * GET /nb-mcp/v1/network/sites/{blog_id}
+ */
+function nb_mcp_bridge_get_network_site( WP_REST_Request $request ) {
+	$site = nb_mcp_bridge_network_site_or_error( $request->get_param( 'blog_id' ) );
+	if ( is_wp_error( $site ) ) {
+		return $site;
+	}
+	nb_mcp_bridge_load_admin_includes();
+	$row            = nb_mcp_bridge_network_site_row( $site );
+	$all_plugins    = get_plugins();
+	$network_active = array_keys( (array) get_site_option( 'active_sitewide_plugins', array() ) );
+
+	switch_to_blog( (int) $site->blog_id );
+	try {
+		$theme   = wp_get_theme();
+		$plugins = array();
+		foreach ( (array) get_option( 'active_plugins', array() ) as $file ) {
+			$plugins[ $file ] = false;
+		}
+		foreach ( $network_active as $file ) {
+			$plugins[ $file ] = true;
+		}
+		$plugin_rows = array();
+		foreach ( $plugins as $file => $network ) {
+			$plugin_rows[] = array(
+				'plugin'  => $file,
+				'name'    => isset( $all_plugins[ $file ]['Name'] ) ? $all_plugins[ $file ]['Name'] : $file,
+				'version' => isset( $all_plugins[ $file ]['Version'] ) ? $all_plugins[ $file ]['Version'] : '',
+				'network' => $network,
+			);
+		}
+		$users = count_users();
+		$row   = array_merge( $row, array(
+			'admin_email' => (string) get_option( 'admin_email' ),
+			'language'    => get_locale(),
+			'theme'       => array(
+				'stylesheet' => $theme->get_stylesheet(),
+				'name'       => $theme->get( 'Name' ),
+				'version'    => $theme->get( 'Version' ),
+			),
+			'plugins'     => $plugin_rows,
+			'counts'      => array(
+				'posts' => (int) wp_count_posts( 'post' )->publish,
+				'pages' => (int) wp_count_posts( 'page' )->publish,
+				'users' => isset( $users['total_users'] ) ? (int) $users['total_users'] : 0,
+			),
+		) );
+	} finally {
+		restore_current_blog();
+	}
+
+	return rest_ensure_response( $row );
+}
+
+/**
+ * GET /nb-mcp/v1/network/sites/{blog_id}/roles
+ */
+function nb_mcp_bridge_get_network_site_roles( WP_REST_Request $request ) {
+	$site = nb_mcp_bridge_network_site_or_error( $request->get_param( 'blog_id' ) );
+	if ( is_wp_error( $site ) ) {
+		return $site;
+	}
+	switch_to_blog( (int) $site->blog_id );
+	try {
+		$roles = array();
+		foreach ( wp_roles()->roles as $slug => $role ) {
+			$roles[] = array( 'slug' => $slug, 'name' => translate_user_role( $role['name'] ) );
+		}
+	} finally {
+		restore_current_blog();
+	}
+	return rest_ensure_response( array( 'roles' => $roles ) );
+}
+
+/**
+ * Normalized user row (same shape as the core REST API with context=edit).
+ *
+ * @param WP_User $user User initialized for the blog.
+ * @return array
+ */
+function nb_mcp_bridge_user_row( $user ) {
+	return array(
+		'id'              => (int) $user->ID,
+		'username'        => (string) $user->user_login,
+		'name'            => (string) $user->display_name,
+		'email'           => (string) $user->user_email,
+		'roles'           => array_values( (array) $user->roles ),
+		'registered_date' => mysql_to_rfc3339( $user->user_registered ),
+		'super_admin'     => is_super_admin( $user->ID ),
+	);
+}
+
+/**
+ * GET /nb-mcp/v1/network/sites/{blog_id}/users
+ */
+function nb_mcp_bridge_get_network_site_users( WP_REST_Request $request ) {
+	$site = nb_mcp_bridge_network_site_or_error( $request->get_param( 'blog_id' ) );
+	if ( is_wp_error( $site ) ) {
+		return $site;
+	}
+	$users = get_users( array(
+		'blog_id' => (int) $site->blog_id,
+		'number'  => 1000,
+		'orderby' => 'login',
+	) );
+	return rest_ensure_response( array(
+		'blog_id' => (int) $site->blog_id,
+		'me'      => get_current_user_id(),
+		'users'   => array_map( 'nb_mcp_bridge_user_row', $users ),
+	) );
+}
+
+/**
+ * POST /nb-mcp/v1/network/sites/{blog_id}/users
+ *
+ * Creates a network user and adds it to the blog with the given role (what WP-admin
+ * "Add New User" does on a subsite). The password is never echoed back.
+ */
+function nb_mcp_bridge_create_network_site_user( WP_REST_Request $request ) {
+	$site = nb_mcp_bridge_network_site_or_error( $request->get_param( 'blog_id' ) );
+	if ( is_wp_error( $site ) ) {
+		return $site;
+	}
+	$username = (string) $request->get_param( 'username' );
+	$email    = (string) $request->get_param( 'email' );
+	$password = (string) $request->get_param( 'password' );
+	$role     = (string) $request->get_param( 'role' );
+
+	// Same rule as WP-admin on multisite (wpmu_validate_user_signup).
+	if ( ! preg_match( '/^[a-z0-9]{4,60}$/', $username ) ) {
+		return new WP_Error( 'nb_mcp_invalid_network_username', __( 'On a multisite network, usernames must be 4-60 lowercase letters (a-z) and numbers.', 'nb-mcp-bridge' ), array( 'status' => 400 ) );
+	}
+	if ( ! is_email( $email ) ) {
+		return new WP_Error( 'rest_invalid_param', __( 'Invalid email address.', 'nb-mcp-bridge' ), array( 'status' => 400 ) );
+	}
+	if ( strlen( $password ) < 8 || strlen( $password ) > 200 || false !== strpos( $password, '\\' ) ) {
+		return new WP_Error( 'rest_invalid_param', __( 'Invalid password.', 'nb-mcp-bridge' ), array( 'status' => 400 ) );
+	}
+	if ( username_exists( $username ) ) {
+		return new WP_Error( 'existing_user_login', __( 'Sorry, that username already exists!', 'nb-mcp-bridge' ), array( 'status' => 409 ) );
+	}
+	if ( email_exists( $email ) ) {
+		return new WP_Error( 'existing_user_email', __( 'Sorry, that email address is already used!', 'nb-mcp-bridge' ), array( 'status' => 409 ) );
+	}
+
+	switch_to_blog( (int) $site->blog_id );
+	try {
+		if ( ! wp_roles()->is_role( $role ) ) {
+			return new WP_Error( 'rest_user_invalid_role', __( 'Role does not exist on this site.', 'nb-mcp-bridge' ), array( 'status' => 400 ) );
+		}
+	} finally {
+		restore_current_blog();
+	}
+
+	$user_id = wpmu_create_user( $username, $password, $email );
+	if ( ! $user_id ) {
+		return new WP_Error( 'nb_mcp_user_create_failed', __( 'The user could not be created.', 'nb-mcp-bridge' ), array( 'status' => 500 ) );
+	}
+	$added = add_user_to_blog( (int) $site->blog_id, $user_id, $role );
+	if ( is_wp_error( $added ) ) {
+		return $added;
+	}
+	$first = (string) $request->get_param( 'first_name' );
+	$last  = (string) $request->get_param( 'last_name' );
+	if ( '' !== $first || '' !== $last ) {
+		wp_update_user( array( 'ID' => $user_id, 'first_name' => $first, 'last_name' => $last, 'display_name' => trim( $first . ' ' . $last ) ) );
+	}
+
+	$user = new WP_User( $user_id, '', (int) $site->blog_id );
+	return new WP_REST_Response( nb_mcp_bridge_user_row( $user ), 201 );
+}
+
+/**
+ * POST /nb-mcp/v1/network/sites/{blog_id}/users/{user_id}/remove
+ *
+ * Removes a user from one site of the network (the user account itself stays), and
+ * reassigns their content on that site. Refuses the account making the request.
+ */
+function nb_mcp_bridge_remove_network_site_user( WP_REST_Request $request ) {
+	$site = nb_mcp_bridge_network_site_or_error( $request->get_param( 'blog_id' ) );
+	if ( is_wp_error( $site ) ) {
+		return $site;
+	}
+	$blog_id  = (int) $site->blog_id;
+	$user_id  = (int) $request->get_param( 'user_id' );
+	$reassign = (int) $request->get_param( 'reassign' );
+
+	if ( get_current_user_id() === $user_id ) {
+		return new WP_Error( 'nb_mcp_cannot_remove_self', __( 'Refusing to remove the account this request authenticates as.', 'nb-mcp-bridge' ), array( 'status' => 409 ) );
+	}
+	if ( $reassign === $user_id ) {
+		return new WP_Error( 'rest_user_invalid_reassign', __( 'Content cannot be reassigned to the user being removed.', 'nb-mcp-bridge' ), array( 'status' => 400 ) );
+	}
+	if ( ! is_user_member_of_blog( $user_id, $blog_id ) ) {
+		return new WP_Error( 'rest_user_invalid_id', __( 'This user is not a member of the site.', 'nb-mcp-bridge' ), array( 'status' => 404 ) );
+	}
+	if ( ! is_user_member_of_blog( $reassign, $blog_id ) ) {
+		return new WP_Error( 'rest_user_invalid_reassign', __( 'The user to reassign content to is not a member of the site.', 'nb-mcp-bridge' ), array( 'status' => 400 ) );
+	}
+
+	$user    = new WP_User( $user_id, '', $blog_id );
+	$row     = nb_mcp_bridge_user_row( $user );
+	$removed = remove_user_from_blog( $user_id, $blog_id, $reassign );
+	if ( is_wp_error( $removed ) ) {
+		return $removed;
+	}
+	return rest_ensure_response( array( 'removed' => true, 'user' => $row ) );
+}

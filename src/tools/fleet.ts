@@ -7,6 +7,7 @@ import type { ToolContext } from './context.js';
 import { errorResult, jsonResult, requireWritable, runFleet, selectSites } from './helpers.js';
 import { fetchPlugins, validatePluginId } from './plugins.js';
 import { fetchBridgeUpdates, stripPhp } from './updates.js';
+import { fetchSiteHealth } from '../wp/site-health.js';
 
 const siteFilterSchema = {
   sites: z.array(z.string()).optional().describe('Restrict to these site ids (default: every available site)'),
@@ -159,6 +160,42 @@ export function register(server: McpServer, ctx: ToolContext): void {
           results,
           skipped,
         });
+      } catch (err) {
+        return errorResult(err);
+      }
+    },
+  );
+
+  server.registerTool(
+    'fleet_site_health',
+    {
+      title: 'Fleet Site Health',
+      description:
+        'Runs WordPress Site Health on every site with nb-mcp-bridge 1.2.0+ (see get_site_health) and returns the per-site results plus totals of critical and recommended items. Filter with sites/tags; defaults to every available site with the bridge enabled. Per-site errors never fail the whole call. Read-only; takes up to a minute per site.',
+      inputSchema: siteFilterSchema,
+      annotations: { readOnlyHint: true, openWorldHint: true },
+    },
+    async ({ sites, tags }) => {
+      try {
+        const { selected, skipped } = selectSites(ctx.registry, { sites, tags });
+        const targets = selected.filter((site) => site.bridge !== false);
+        const results = await runFleet(
+          targets,
+          (site) => fetchSiteHealth(ctx.registry.client(site.id)),
+          ctx.env.FLEET_CONCURRENCY,
+        );
+        const summary = results.reduce(
+          (acc, r) => {
+            if (!r.ok || !r.data) acc.failed += 1;
+            else {
+              acc.critical += r.data.summary.critical;
+              acc.recommended += r.data.summary.recommended;
+            }
+            return acc;
+          },
+          { sites: results.length, critical: 0, recommended: 0, failed: 0, skipped: skipped.length + selected.length - targets.length },
+        );
+        return jsonResult({ summary, results, skipped });
       } catch (err) {
         return errorResult(err);
       }

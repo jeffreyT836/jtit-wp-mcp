@@ -4,6 +4,7 @@ import type { SiteStatus } from '../snapshots.js';
 import { alert, gauge, pageHead, panel, statusDot } from './components.js';
 import { html, type SafeHtml } from './html.js';
 import { icon } from './icons.js';
+import { healthBadges } from './health-views.js';
 
 const fmtDate = (iso?: string | null) =>
   iso ? new Date(iso).toLocaleString('nl-NL', { timeZone: 'Europe/Amsterdam' }) : '—';
@@ -59,18 +60,20 @@ ${pageHead('Overzicht', { eyebrow: 'Fleet', sub: `Laatste data van n8n: ${fmtDat
 ${panel({
   id: 'sites', title: 'Sites', icon: 'globe', meta: String(rows.length), open: true,
   body: html`<div class="table-wrap"><table>
-    <thead><tr><th>Site</th><th>Status</th><th>WordPress</th><th>PHP</th><th>Bridge</th><th>Updates</th><th>Laatste data</th></tr></thead>
+    <thead><tr><th>Site</th><th>Status</th><th>WordPress</th><th>PHP</th><th>Bridge</th><th>Updates</th><th>Site Health</th><th>Laatste data</th></tr></thead>
     <tbody>
       ${rows.map(
         ({ site, status }) => html`<tr>
           <td class="site-cell"><a href="/sites/${site.id}">${site.name}</a><br><small>${site.url}</small><br>
             ${site.tags.map((t) => html`<span class="tag">${t}</span>`)}
-            ${site.readOnly ? html`<span class="tag">read-only</span>` : null}</td>
+            ${site.readOnly ? html`<span class="tag">read-only</span>` : null}
+            ${status.multisite ? html`<span class="tag">multisite</span>` : null}</td>
           <td>${statusBadge(site, status)}</td>
           <td class="version">${status.wpVersion ?? '—'}</td>
           <td class="version">${status.phpVersion ?? '—'}</td>
           <td class="version">${status.bridge ?? '—'}</td>
           <td>${updatesCell(status)}</td>
+          <td>${healthBadges(status.health)}</td>
           <td><small>${fmtDate(status.collectedAt)}</small></td>
         </tr>`,
       )}
@@ -184,6 +187,8 @@ function hero(csrf: string, site: StoredSite, status: SiteStatus): SafeHtml {
     <span class="chip"><small>PHP</small><b>${status.phpVersion ?? '—'}</b></span>
     <span class="chip"><small>Bridge</small><b>${site.bridge ? (status.bridge ?? '—') : 'uit'}</b></span>
     <span class="chip"><small>Updates</small><b>${status.updates ? String(updates) : '—'}</b></span>
+    <span class="chip"><small>Site Health</small>${healthBadges(status.health)}</span>
+    ${status.multisite ? html`<span class="chip"><small>Type</small><b>multisite</b></span>` : null}
     <span class="chip"><small>Laatste data</small><b>${fmtDate(status.collectedAt)}</b></span>
   </div>
   ${status.reachable === false && status.error
@@ -192,6 +197,7 @@ function hero(csrf: string, site: StoredSite, status: SiteStatus): SafeHtml {
   <div class="actions">
     <a class="button" href="/sites/${site.id}/edit">${icon('edit')} Bewerken</a>
     <a class="button secondary" href="/sites/${site.id}/users">${icon('users')} Gebruikers</a>
+    ${status.multisite ? html`<a class="button secondary" href="/sites/${site.id}/network">${icon('globe')} Multisite</a>` : null}
     <form method="post" action="/sites/${site.id}/test" class="inline">
       <input type="hidden" name="_csrf" value="${csrf}">
       <button type="submit" class="secondary" data-busy="Verbinding testen…">${icon('plug')} Verbinding testen</button>
@@ -206,12 +212,14 @@ export function siteDetailPage(opts: {
   status: SiteStatus;
   snapshots: SnapshotRow[];
   updates: SafeHtml;
+  health: SafeHtml;
   audit: AuditRow[];
 }) {
-  const { csrf, site, status, snapshots, updates, audit } = opts;
+  const { csrf, site, status, snapshots, updates, health, audit } = opts;
   return html`
 ${hero(csrf, site, status)}
 ${updates}
+${health}
 ${panel({
   id: 'config', title: 'Configuratie', icon: 'sliders',
   body: html`<dl class="meta">

@@ -26,9 +26,9 @@ export function panel(opts: {
 }
 
 /** Nested collapsible group inside a panel (e.g. "Plugins" within "Updates"). */
-export function subPanel(title: string | SafeHtml, count: number | null, body: SafeHtml, open = true): SafeHtml {
+export function subPanel(title: string | SafeHtml, count: number | null, body: SafeHtml, open = true, tone: 'warn' | 'ok' | 'error' = 'warn'): SafeHtml {
   return html`<details class="sub" ${open ? 'open' : ''}>
-  <summary><span>${title}</span>${count === null ? null : html`<span class="count">${String(count)}</span>`}${icon('chevron', 'icon chev')}</summary>
+  <summary><span>${title}</span>${count === null ? null : html`<span class="count ${tone}">${String(count)}</span>`}${icon('chevron', 'icon chev')}</summary>
   <div class="sub-body">${body}</div>
 </details>`;
 }

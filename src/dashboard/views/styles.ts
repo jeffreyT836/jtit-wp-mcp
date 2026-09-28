@@ -146,6 +146,18 @@ details[open] > .panel-body, details[open] > .sub-body { animation: fade .35s ea
 details.sub { border: 1px solid var(--border); border-radius: 12px; margin-bottom: .85rem; background: var(--surface-2); }
 details.sub > summary { display: flex; align-items: center; gap: .6rem; padding: .7rem 1rem; cursor: pointer; list-style: none; font-weight: 650; }
 details.sub .count { font-size: .75rem; font-weight: 700; padding: .05rem .5rem; border-radius: 999px; background: var(--warn-soft); color: var(--warn); }
+details.sub .count.ok { background: var(--ok-soft); color: var(--ok); } details.sub .count.error { background: var(--pink-soft); color: var(--pink-text); }
+details.health-test { border-top: 1px solid var(--border); background: var(--surface); }
+details.health-test:first-child { border-top: 0; border-radius: 9px 9px 0 0; } details.health-test:last-child { border-radius: 0 0 9px 9px; }
+details.health-test > summary { display: flex; align-items: center; gap: .65rem; padding: .7rem .9rem; cursor: pointer; list-style: none; }
+details.health-test > summary:hover { background: var(--surface-2); }
+.health-label { font-weight: 600; }
+.health-body { padding: 0 .9rem .9rem 2.2rem; color: var(--muted); font-size: .92rem; }
+.health-body p { margin: 0 0 .5rem; }
+.health-links { display: flex; flex-wrap: wrap; gap: .5rem 1rem; }
+.health-links a { display: inline-flex; align-items: center; gap: .3rem; }
+.health-links .icon { width: 14px; height: 14px; }
+.chip .badge { font-size: .72rem; }
 .sub-body { padding: 0 .5rem .5rem; }
 .sub-body table { background: var(--surface); border-radius: 9px; }
 

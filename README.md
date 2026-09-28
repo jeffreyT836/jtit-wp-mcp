@@ -461,6 +461,14 @@ Per site:
 - **Status en updates** — data van n8n (`/api/ingest`), plus live controleren en plugins,
   thema's, core en vertalingen bijwerken, optioneel veilig (backup, controle, automatisch
   terugzetten; vereist nb-mcp-bridge 1.1.0).
+- **Site Health** — alle WordPress Site Health-tests (kritiek / aanbevolen / geslaagd, met uitleg)
+  plus een beperkte selectie uit het Info-tabblad; dagelijks via n8n (`fleet_site_health`) of live
+  met "Opnieuw controleren". Vereist nb-mcp-bridge 1.2.0.
+- **Multisite** (`/sites/<id>/network`) — bij een multisite verschijnt een extra menu-item met alle
+  sites in het netwerk; per subsite een overzicht (thema, actieve plugins, aantallen) en
+  gebruikersbeheer van die subsite. Gebruikers verwijderen betekent op multisite "van de site
+  verwijderen" (het account blijft in het netwerk). De gekoppelde gebruiker moet superbeheerder
+  zijn. Vereist nb-mcp-bridge 1.2.0.
 - **Gebruikers** (`/sites/<id>/users`) — live lijst van WordPress-gebruikers met rol, gebruikers
   aanmaken (gebruikersnaam, e-mail, rol, wachtwoord) en verwijderen met overdracht van hun
   inhoud. Het wachtwoord gaat alleen via HTTPS naar WordPress; het dashboard slaat het niet op,
