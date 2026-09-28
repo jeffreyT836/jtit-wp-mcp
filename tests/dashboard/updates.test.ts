@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { loginFailureMessage } from '../../src/dashboard/routes/site-routes.js';
 import { failedChecks, parseUpdateSelection, plainText, runUpdates, SafeUpdatesUnsupportedError } from '../../src/dashboard/updates.js';
 import { WpClient } from '../../src/wp/client.js';
 import { createMockFetch, jsonResponse, makeSite } from '../helpers/harness.js';
@@ -182,6 +183,12 @@ describe('safe updates', () => {
     expect(results[1]!.message).toBe('Fouten na de update, automatisch teruggezet (homepage: Page shows a PHP fatal error.).');
     expect(results[2]!.message).toContain('errorlog: PHP Fatal error in x.php');
     expect(results[2]!.message).toContain('wp-content/nb-mcp-backups/x/plugins/stuck');
+  });
+
+  it('explains WordPress login failures by error code', () => {
+    expect(loginFailureMessage('mcp-bot', 'invalid_username', '<strong>Fout:</strong> onbekende gebruikersnaam.')).toContain('geen gebruiker met inlognaam of e-mailadres "mcp-bot"');
+    expect(loginFailureMessage('mcp-bot', 'incorrect_password')).toContain('Application Password klopt niet');
+    expect(loginFailureMessage('mcp-bot', undefined, '<strong>Fout:</strong> iets')).toBe('Inloggen mislukt: Fout: iets');
   });
 
   it('strips markup from WordPress messages and summarizes failed checks', () => {

@@ -43,6 +43,7 @@ export async function checkSite(client: WpClient, site: ResolvedSite) {
   let user: { id: number; username: string; name?: string } | undefined;
   let roles: string[] = [];
   let error: string | undefined;
+  let errorCode: string | undefined;
 
   try {
     const me = await client.request<WpUserMe>('/wp/v2/users/me', { query: { context: 'edit' } });
@@ -51,6 +52,7 @@ export async function checkSite(client: WpClient, site: ResolvedSite) {
     user = { id: me.id, username: me.username ?? me.slug ?? '', name: me.name };
   } catch (err) {
     ok = false;
+    errorCode = err instanceof WpError ? err.code : undefined;
     error =
       err instanceof WpError ? err.message : sanitizeMessage(err instanceof Error ? err.message : String(err));
   }
@@ -58,7 +60,7 @@ export async function checkSite(client: WpClient, site: ResolvedSite) {
   const bridge = await bridgeStatus(client, site);
   const isAdmin = roles.includes('administrator');
 
-  return { ok, user, roles, isAdmin, bridge, ...(error ? { error } : {}) };
+  return { ok, user, roles, isAdmin, bridge, ...(error ? { error } : {}), ...(errorCode ? { errorCode } : {}) };
 }
 
 async function fetchSiteInfo(client: WpClient, site: ResolvedSite) {

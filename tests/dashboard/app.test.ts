@@ -169,7 +169,7 @@ describe('dashboard app', () => {
     const failed = await browser.post('/sites', { ...fields, password: 'wrong password' });
     expect(failed.status).toBe(422);
     const failedHtml = await failed.text();
-    expect(failedHtml).toContain('Inloggen mislukt');
+    expect(failedHtml).toContain('Application Password klopt niet');
     expect(failedHtml).not.toContain('wrong password');
     expect(failedHtml).toContain('Klant &lt;A&gt;');
     expect(store.list()).toEqual([]);

@@ -7,7 +7,7 @@ import { sanitizeMessage } from '../../wp/errors.js';
 import { requireCsrf, requireFullAuth } from '../auth/session.js';
 import { renderPage, type RouteContext } from '../context.js';
 import { summarizeSite } from '../snapshots.js';
-import { latestUpdates } from '../updates.js';
+import { latestUpdates, plainText } from '../updates.js';
 import { updatesSection } from '../views/update-views.js';
 import type { StoredSite } from '../../store/site-store.js';
 import {
@@ -25,12 +25,27 @@ export interface ConnectionResult {
   message: string;
 }
 
+/** Explains the common WordPress login failures in plain Dutch. */
+export function loginFailureMessage(username: string, code?: string, error?: string): string {
+  switch (code) {
+    case 'invalid_username':
+      return `WordPress kent geen gebruiker met inlognaam of e-mailadres "${username}". Vul bij "WordPress-gebruiker" de inlognaam in van de gebruiker bij wie het Application Password is aangemaakt (WP-admin → Gebruikers).`;
+    case 'incorrect_password':
+      return `Gebruiker "${username}" bestaat, maar het Application Password klopt niet (of is ingetrokken). Maak een nieuw Application Password aan en vul dat in.`;
+    case 'application_passwords_disabled':
+    case 'application_passwords_disabled_for_user':
+      return 'Application Passwords zijn uitgeschakeld op deze site (vaak door een beveiligingsplugin zoals Wordfence).';
+    default:
+      return `Inloggen mislukt: ${plainText(error ?? 'onbekende fout')}`;
+  }
+}
+
 /** Tests credentials against the live site: authenticated, administrator, bridge status. */
 export async function testConnection(ctx: RouteContext, site: ResolvedSite): Promise<ConnectionResult> {
   if (!site.available) return { ok: false, message: site.unavailableReason ?? 'site is niet beschikbaar' };
   try {
     const result = await checkSite(clientFor(ctx, site), site);
-    if (!result.ok) return { ok: false, message: `Inloggen mislukt: ${result.error ?? 'onbekende fout'}` };
+    if (!result.ok) return { ok: false, message: loginFailureMessage(site.username, result.errorCode, result.error) };
     if (!result.isAdmin) {
       return { ok: false, message: `Gebruiker "${result.user?.username}" is geen administrator; updates zullen falen.` };
     }
