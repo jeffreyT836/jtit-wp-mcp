@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import type { ResolvedSite } from '../config/schema.js';
 import { assertSiteAccessible, isWpJsonError, WpError } from './errors.js';
 
@@ -184,8 +185,14 @@ export class WpClient {
         site: this.site.id,
       });
     }
+    // Some hosts' edge caches (e.g. Kinsta/Cloudflare) cache these responses despite
+    // auth; a unique query param guarantees a fresh answer (the bridge also sends no-store).
+    const isGet = (options.method ?? 'GET').toUpperCase() === 'GET';
+    const requestOptions = isGet
+      ? { ...options, query: { ...options.query, _nbmcp: `${Date.now().toString(36)}${randomBytes(4).toString('hex')}` } }
+      : options;
     try {
-      return await this.request<T>(`/nb-mcp/v1${path}`, options);
+      return await this.request<T>(`/nb-mcp/v1${path}`, requestOptions);
     } catch (err) {
       if (err instanceof WpError && err.status === 404 && err.code === 'rest_no_route') {
         throw new WpError({

@@ -17,13 +17,27 @@ expose. Requires WordPress 6.0+ and PHP 7.4+.
 3. Log in as `mcp-bot`, go to **Users → Profile**, scroll to **Application
    Passwords**, enter a name (e.g. `wp-fleet-mcp`) and click **Add New
    Application Password**. Copy the generated password immediately — it is
-   shown only once — and store it as the site's `passwordEnv` secret in
-   `wp-fleet-mcp`'s `config/sites.json`.
+   shown only once — and paste it into the site form of the WP Fleet dashboard
+   (https://wp-dashboard.jtit.nl), where it is stored encrypted.
 4. Confirm the site is reachable over **HTTPS**. WordPress only allows
    Application Password authentication over plain HTTP when
    `WP_ENVIRONMENT_TYPE` is `local` or `development` (see
    `wp_is_application_passwords_available()`); every other environment must
    be served over HTTPS or Application Password auth will be rejected.
+
+## Caching (Kinsta, Cloudflare, other CDNs)
+
+Since 1.0.7 every `nb-mcp/v1` response (including errors) is sent with
+`Cache-Control: no-store, private` and `Vary: Authorization`, and the MCP client
+adds a unique `_nbmcp` query parameter to every bridge GET. Some edge caches
+(seen on Kinsta) cached authenticated bridge responses before 1.0.7 and served
+them to anonymous visitors. After upgrading, **purge the site's page/edge and CDN
+cache** once. To be extra safe, ask the host to exclude `/wp-json/nb-mcp/*` from
+caching. Check with:
+
+    curl -sI https://example.com/wp-json/nb-mcp/v1/updates | grep -iE 'cache-control|cf-cache-status'
+
+An anonymous request must return `403` with `no-store`, never a cached `200`.
 
 ## Multisite
 

@@ -3,23 +3,70 @@
   "nodes": [
     {
       "parameters": {
-        "rule": { "interval": [{ "field": "hours", "hoursInterval": 1 }] }
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 1
+            }
+          ]
+        }
       },
       "id": "a1f0c7a2-0001-4a6e-9a01-000000000001",
       "name": "Elk uur",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
-      "position": [0, 0]
+      "position": [
+        0,
+        0
+      ]
     },
     {
       "parameters": {
-        "jsCode": "// Welke MCP-tools we per run ophalen. Elke tool wordt een apart item.\nreturn [\n  { json: { kind: 'fleet_health', arguments: {} } },\n  { json: { kind: 'fleet_updates_report', arguments: {} } },\n];"
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "daysInterval": 1,
+              "triggerAtHour": 6
+            }
+          ]
+        }
+      },
+      "id": "a1f0c7a2-0006-4a6e-9a01-000000000006",
+      "name": "Dagelijks 06:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// n8n-expressies mogen het woord `arguments` niet gebruiken, dus de complete\n// JSON-RPC-body voor de MCP wordt hier (in de Code-node) opgebouwd.\nconst call = (tool, args = {}) => ({\n  json: { kind: tool, body: { jsonrpc: '2.0', id: tool, method: 'tools/call', params: { name: tool, arguments: args } } },\n});\n\n// Elk uur: snelle status + updates uit de cache van WordPress.\nreturn [\n  call('fleet_health'),\n  call('fleet_updates_report'),\n];"
       },
       "id": "a1f0c7a2-0002-4a6e-9a01-000000000002",
-      "name": "Tools",
+      "name": "Tools (elk uur)",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [220, 0]
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// n8n-expressies mogen het woord `arguments` niet gebruiken, dus de complete\n// JSON-RPC-body voor de MCP wordt hier (in de Code-node) opgebouwd.\nconst call = (tool, args = {}) => ({\n  json: { kind: tool, body: { jsonrpc: '2.0', id: tool, method: 'tools/call', params: { name: tool, arguments: args } } },\n});\n\n// Dagelijks: WordPress opnieuw laten zoeken naar updates (refresh) en\n// een audit van alle administrator-accounts over de hele vloot.\nreturn [\n  call('fleet_updates_report', { refresh: true }),\n  call('fleet_user_audit', { role: 'administrator' }),\n];"
+      },
+      "id": "a1f0c7a2-0007-4a6e-9a01-000000000007",
+      "name": "Tools (dagelijks)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        220
+      ]
     },
     {
       "parameters": {
@@ -29,31 +76,56 @@
         "genericAuthType": "httpHeaderAuth",
         "sendHeaders": true,
         "headerParameters": {
-          "parameters": [{ "name": "Accept", "value": "application/json, text/event-stream" }]
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json, text/event-stream"
+            }
+          ]
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ jsonrpc: '2.0', id: $json.kind, method: 'tools/call', params: { name: $json.kind, arguments: $json.arguments } }) }}",
-        "options": { "timeout": 300000 }
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {
+          "timeout": 300000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 0
+            }
+          }
+        }
       },
       "id": "a1f0c7a2-0003-4a6e-9a01-000000000003",
       "name": "MCP: tool aanroepen",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [440, 0],
+      "position": [
+        460,
+        110
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
       "credentials": {
-        "httpHeaderAuth": { "id": "", "name": "WP MCP token" }
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "WP MCP token"
+        }
       }
     },
     {
       "parameters": {
-        "jsCode": "// Pakt het JSON-resultaat uit het MCP-antwoord en maakt er een ingest-body van.\nreturn $input.all().map((item) => {\n  const res = item.json;\n  if (res.error) throw new Error(`MCP-fout (${res.id}): ${res.error.message}`);\n  const text = res.result?.content?.[0]?.text ?? 'null';\n  if (res.result?.isError) throw new Error(`Tool ${res.id} faalde: ${text}`);\n  return { json: { kind: res.id, collectedAt: new Date().toISOString(), data: JSON.parse(text) } };\n});"
+        "jsCode": "// Pakt het JSON-resultaat uit het MCP-antwoord en maakt er een ingest-body van.\n// Een fout bij één tool stopt de run, zodat hij zichtbaar is onder Executions.\nreturn $input.all().map((item) => {\n  const res = item.json;\n  if (res.error) throw new Error(`MCP-fout (${res.id}): ${res.error.message}`);\n  const text = res.result?.content?.[0]?.text ?? 'null';\n  if (res.result?.isError) throw new Error(`Tool ${res.id} faalde: ${text}`);\n  return { json: { kind: res.id, collectedAt: new Date().toISOString(), data: JSON.parse(text) } };\n});"
       },
       "id": "a1f0c7a2-0004-4a6e-9a01-000000000004",
       "name": "Resultaat uitpakken",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [660, 0]
+      "position": [
+        680,
+        110
+      ]
     },
     {
       "parameters": {
@@ -70,18 +142,92 @@
       "name": "Dashboard: data opslaan",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [880, 0],
+      "position": [
+        900,
+        110
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
       "credentials": {
-        "httpHeaderAuth": { "id": "", "name": "WP Dashboard ingest token" }
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "WP Dashboard ingest token"
+        }
       }
     }
   ],
   "connections": {
-    "Elk uur": { "main": [[{ "node": "Tools", "type": "main", "index": 0 }]] },
-    "Tools": { "main": [[{ "node": "MCP: tool aanroepen", "type": "main", "index": 0 }]] },
-    "MCP: tool aanroepen": { "main": [[{ "node": "Resultaat uitpakken", "type": "main", "index": 0 }]] },
-    "Resultaat uitpakken": { "main": [[{ "node": "Dashboard: data opslaan", "type": "main", "index": 0 }]] }
+    "Elk uur": {
+      "main": [
+        [
+          {
+            "node": "Tools (elk uur)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dagelijks 06:00": {
+      "main": [
+        [
+          {
+            "node": "Tools (dagelijks)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tools (elk uur)": {
+      "main": [
+        [
+          {
+            "node": "MCP: tool aanroepen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tools (dagelijks)": {
+      "main": [
+        [
+          {
+            "node": "MCP: tool aanroepen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MCP: tool aanroepen": {
+      "main": [
+        [
+          {
+            "node": "Resultaat uitpakken",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resultaat uitpakken": {
+      "main": [
+        [
+          {
+            "node": "Dashboard: data opslaan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
   },
-  "settings": { "executionOrder": "v1" },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/Amsterdam"
+  },
   "active": false
 }

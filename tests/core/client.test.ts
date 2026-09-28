@@ -124,7 +124,28 @@ describe('WpClient', () => {
 
     await client.bridge('/status');
 
-    expect(capturedUrl).toBe('https://acme.example.com/wp-json/nb-mcp/v1/status');
+    expect(capturedUrl).toMatch(/^https:\/\/acme\.example\.com\/wp-json\/nb-mcp\/v1\/status\?_nbmcp=\w+$/);
+  });
+
+  it('bridge() adds a unique cache-buster to GETs only, so a CDN never serves a stale copy', async () => {
+    const site = makeSite({ id: 'acme' });
+    const urls: string[] = [];
+    const client = new WpClient(site, {
+      fetch: createMockFetch((url) => {
+        urls.push(url);
+        return jsonResponse({});
+      }),
+    });
+
+    await client.bridge('/updates', { query: { refresh: true } });
+    await client.bridge('/updates');
+    await client.bridge('/updates/plugins', { method: 'POST', body: { plugins: [] } });
+
+    const params = urls.map((u) => new URL(u).searchParams);
+    expect(params[0]!.get('refresh')).toBe('true');
+    expect(params[0]!.get('_nbmcp')).toBeTruthy();
+    expect(params[0]!.get('_nbmcp')).not.toBe(params[1]!.get('_nbmcp'));
+    expect(params[2]!.has('_nbmcp')).toBe(false);
   });
 
   it('bridge() refuses when site.bridge === false', async () => {

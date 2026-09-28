@@ -5,7 +5,7 @@
  * Description:       Companion mu-plugin for wp-fleet-mcp. Exposes REST endpoints
  *                     (namespace nb-mcp/v1) for status, update management and role
  *                     information that WordPress core REST does not provide.
- * Version:           1.0.6
+ * Version:           1.0.7
  * Requires at least: 6.0
  * Requires PHP:      7.4
  * Author:            wp-fleet-mcp
@@ -18,7 +18,7 @@
 defined( 'ABSPATH' ) || exit;
 
 // Reported by GET /nb-mcp/v1/status; keep in sync with the "Version" header above.
-define( 'NB_MCP_BRIDGE_VERSION', '1.0.6' );
+define( 'NB_MCP_BRIDGE_VERSION', '1.0.7' );
 
 /**
  * Register all nb-mcp/v1 REST routes.
@@ -91,6 +91,28 @@ function nb_mcp_bridge_register_routes() {
 	) );
 }
 add_action( 'rest_api_init', 'nb_mcp_bridge_register_routes' );
+
+/**
+ * Forbid any shared cache (CDN, edge or page cache such as Kinsta/Cloudflare) from storing
+ * nb-mcp/v1 responses. They are per-user and authenticated; a cached copy would be served
+ * to anonymous visitors. Applies to errors too (e.g. a 403 or a stale 404), so a cached
+ * error can never mask the real answer either.
+ *
+ * @param WP_REST_Response $response Result to send to the client.
+ * @param WP_REST_Server   $server   Server instance.
+ * @param WP_REST_Request  $request  Request used to generate the response.
+ * @return WP_REST_Response
+ */
+function nb_mcp_bridge_no_cache_headers( $response, $server, $request ) {
+	if ( $response instanceof WP_REST_Response && 0 === strpos( $request->get_route(), '/nb-mcp/v1' ) ) {
+		$response->header( 'Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0, private' );
+		$response->header( 'Pragma', 'no-cache' );
+		$response->header( 'Expires', '0' );
+		$response->header( 'Vary', 'Authorization' );
+	}
+	return $response;
+}
+add_filter( 'rest_post_dispatch', 'nb_mcp_bridge_no_cache_headers', 10, 3 );
 
 /**
  * Build a permission_callback requiring one of the given capabilities AND
