@@ -7,6 +7,9 @@ import { sanitizeMessage } from '../../wp/errors.js';
 import { requireCsrf, requireFullAuth } from '../auth/session.js';
 import { renderPage, type RouteContext } from '../context.js';
 import { summarizeSite } from '../snapshots.js';
+import { latestUpdates } from '../updates.js';
+import { updatesSection } from '../views/update-views.js';
+import type { StoredSite } from '../../store/site-store.js';
 import {
   auditPage,
   emptySiteForm,
@@ -26,8 +29,7 @@ export interface ConnectionResult {
 export async function testConnection(ctx: RouteContext, site: ResolvedSite): Promise<ConnectionResult> {
   if (!site.available) return { ok: false, message: site.unavailableReason ?? 'site is niet beschikbaar' };
   try {
-    const client = new WpClient(site, { fetch: ctx.fetch, defaultTimeoutMs: ctx.env.WP_TIMEOUT_MS });
-    const result = await checkSite(client, site);
+    const result = await checkSite(clientFor(ctx, site), site);
     if (!result.ok) return { ok: false, message: `Inloggen mislukt: ${result.error ?? 'onbekende fout'}` };
     if (!result.isAdmin) {
       return { ok: false, message: `Gebruiker "${result.user?.username}" is geen administrator; updates zullen falen.` };
@@ -37,6 +39,35 @@ export async function testConnection(ctx: RouteContext, site: ResolvedSite): Pro
   } catch (err) {
     return { ok: false, message: sanitizeMessage(err instanceof Error ? err.message : String(err)) };
   }
+}
+
+/** Renders the site detail page (status, n8n data, updates, audit) with an optional flash. */
+export function renderSiteDetail(
+  ctx: RouteContext,
+  res: Response,
+  site: StoredSite,
+  flash?: { kind: 'ok' | 'error'; message: string },
+  status = 200,
+): void {
+  const snapshots = ctx.db.latestSnapshots(site.id);
+  const csrf = res.locals.auth!.session.csrf_token;
+  renderPage(res, {
+    title: site.name,
+    flash,
+    body: siteDetailPage({
+      csrf,
+      site,
+      status: summarizeSite(snapshots),
+      snapshots,
+      updates: updatesSection({ csrf, site, snapshot: latestUpdates(snapshots) }),
+      audit: ctx.db.recentAudit(500).filter((a) => a.target === site.id).slice(0, 20),
+    }),
+  }, status);
+}
+
+/** WpClient for a site with its decrypted secret, for connection tests and updates. */
+export function clientFor(ctx: RouteContext, site: ResolvedSite): WpClient {
+  return new WpClient(site, { fetch: ctx.fetch, defaultTimeoutMs: ctx.env.WP_TIMEOUT_MS });
 }
 
 function formValues(body: Record<string, unknown>): SiteFormValues {
@@ -129,23 +160,14 @@ export function siteRoutes(ctx: RouteContext): Router {
   router.get('/sites/:id', (req, res) => {
     const site = findSite(req.params.id);
     if (!site) return res.redirect(303, '/');
-    const snapshots = db.latestSnapshots(site.id);
     const flash = req.query.saved
       ? req.query.untested
         ? { kind: 'error' as const, message: 'Opgeslagen, maar de verbindingstest was niet geslaagd.' }
         : { kind: 'ok' as const, message: 'Site opgeslagen en verbinding getest.' }
-      : undefined;
-    renderPage(res, {
-      title: site.name,
-      flash,
-      body: siteDetailPage({
-        csrf: res.locals.auth!.session.csrf_token,
-        site,
-        status: summarizeSite(snapshots),
-        snapshots,
-        audit: db.recentAudit(500).filter((a) => a.target === site.id).slice(0, 20),
-      }),
-    });
+      : req.query.refreshed
+        ? { kind: 'ok' as const, message: 'Updates opnieuw gecontroleerd.' }
+        : undefined;
+    renderSiteDetail(ctx, res, site, flash);
   });
 
   router.get('/sites/:id/edit', (req, res) => {
@@ -162,19 +184,7 @@ export function siteRoutes(ctx: RouteContext): Router {
     if (!site) return res.redirect(303, '/');
     const result = await testConnection(ctx, site);
     db.audit(res.locals.auth!.user.email, 'site_tested', site.id, { ok: result.ok });
-    const stored = findSite(site.id)!;
-    const snapshots = db.latestSnapshots(site.id);
-    renderPage(res, {
-      title: site.name,
-      flash: { kind: result.ok ? 'ok' : 'error', message: result.message },
-      body: siteDetailPage({
-        csrf: res.locals.auth!.session.csrf_token,
-        site: stored,
-        status: summarizeSite(snapshots),
-        snapshots,
-        audit: db.recentAudit(500).filter((a) => a.target === site.id).slice(0, 20),
-      }),
-    });
+    renderSiteDetail(ctx, res, findSite(site.id)!, { kind: result.ok ? 'ok' : 'error', message: result.message });
   });
 
   router.post('/sites/:id/delete', requireCsrf, (req, res) => {

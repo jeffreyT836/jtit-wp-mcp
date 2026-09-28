@@ -62,4 +62,32 @@ details { margin-bottom: .5rem; }
 .qr svg { width: 100%; height: auto; display: block; }
 code.secret { word-break: break-all; }
 label.warn { color: var(--warn); }
+.section-head { display: flex; flex-wrap: wrap; gap: .75rem; align-items: center; justify-content: space-between; margin-bottom: .5rem; }
+.section-head h2 { margin: 0; }
+h3 { font-size: 1rem; margin: 1.25rem 0 .5rem; }
+table.updates td.check, table.updates th.check { width: 2rem; }
+table.updates label { display: inline; font-weight: 500; margin: 0; }
+tr.major td { background: var(--warn-bg); }
+small.warn { color: var(--warn); }
+label.plain { font-weight: 400; }
+.run { display: flex; flex-wrap: wrap; gap: 1rem; align-items: center; margin-top: 1.25rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+button[disabled] { opacity: .6; cursor: progress; }
+`;
+
+/** Served at /assets/app.js (CSP allows only same-origin scripts). Progressive enhancement only. */
+export const APP_JS = `
+document.addEventListener('change', function (e) {
+  var t = e.target;
+  if (!t || !t.matches || !t.matches('input[data-select-all]')) return;
+  var table = t.closest('table');
+  if (!table) return;
+  table.querySelectorAll('tbody input[type=checkbox][name="' + CSS.escape(t.getAttribute('data-select-all') || '') + '"]:not([disabled])')
+    .forEach(function (box) { box.checked = t.checked; });
+});
+document.addEventListener('submit', function (e) {
+  var btn = e.target.querySelector('button[data-busy]');
+  if (!btn) return;
+  btn.disabled = true;
+  btn.textContent = btn.getAttribute('data-busy');
+});
 `;

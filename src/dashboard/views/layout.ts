@@ -18,6 +18,7 @@ export function layout({ title, body, user, csrf, flash }: LayoutOptions): strin
 <meta name="robots" content="noindex, nofollow">
 <title>${title} · WP Fleet</title>
 <link rel="stylesheet" href="/assets/app.css">
+<script src="/assets/app.js" defer></script>
 </head>
 <body>
 <header class="top">

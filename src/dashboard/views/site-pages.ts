@@ -1,7 +1,7 @@
 import type { StoredSite } from '../../store/site-store.js';
 import type { AuditRow, SnapshotRow } from '../db.js';
 import type { SiteStatus } from '../snapshots.js';
-import { html } from './html.js';
+import { html, type SafeHtml } from './html.js';
 
 const fmtDate = (iso?: string | null) =>
   iso ? new Date(iso).toLocaleString('nl-NL', { timeZone: 'Europe/Amsterdam' }) : '—';
@@ -123,9 +123,10 @@ export function siteDetailPage(opts: {
   site: StoredSite;
   status: SiteStatus;
   snapshots: SnapshotRow[];
+  updates: SafeHtml;
   audit: AuditRow[];
 }) {
-  const { csrf, site, status, snapshots, audit } = opts;
+  const { csrf, site, status, snapshots, updates, audit } = opts;
   return html`
 <section class="card">
   <h1>${site.name} ${statusBadge(site, status)}</h1>
@@ -154,6 +155,7 @@ export function siteDetailPage(opts: {
     </form>
   </div>
 </section>
+${updates}
 <section class="card">
   <h2>Laatste data van n8n</h2>
   ${snapshots.length === 0

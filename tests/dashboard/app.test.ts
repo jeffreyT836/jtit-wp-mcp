@@ -75,6 +75,7 @@ describe('dashboard app', () => {
       DASHBOARD_INGEST_TOKEN: INGEST_TOKEN,
       DASHBOARD_SECURE_COOKIES: false,
       WP_TIMEOUT_MS: 5000,
+      WP_UPDATE_TIMEOUT_MS: 5000,
     };
     await seedAdmin(ADMIN, db);
     const app = createDashboardApp({ db, store, env, totpKey: deriveTotpKey(key), fetch: wpFetch });

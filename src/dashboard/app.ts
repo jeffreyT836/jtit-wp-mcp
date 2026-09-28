@@ -4,11 +4,13 @@ import type { DashboardDeps, RouteContext } from './context.js';
 import { apiRoutes } from './routes/api-routes.js';
 import { authRoutes } from './routes/auth-routes.js';
 import { siteRoutes } from './routes/site-routes.js';
-import { APP_CSS } from './views/styles.js';
+import { updateRoutes } from './routes/update-routes.js';
+import { APP_CSS, APP_JS } from './views/styles.js';
 
 const CSP = [
   "default-src 'none'",
   "style-src 'self'",
+  "script-src 'self'",
   "img-src 'self' data:",
   "form-action 'self'",
   "frame-ancestors 'none'",
@@ -69,12 +71,18 @@ export function createDashboardApp(deps: DashboardDeps): express.Express {
     res.type('css').send(APP_CSS);
   });
 
+  app.get('/assets/app.js', (_req, res) => {
+    res.setHeader('Cache-Control', 'public, max-age=3600');
+    res.type('js').send(APP_JS);
+  });
+
   app.use('/api', apiRoutes(ctx));
 
   app.use(sameOrigin);
-  app.use(express.urlencoded({ extended: false, limit: '32kb' }));
+  app.use(express.urlencoded({ extended: false, limit: '64kb', parameterLimit: 500 }));
   app.use(ctx.sessions.load());
   app.use(authRoutes(ctx));
+  app.use(updateRoutes(ctx));
   app.use(siteRoutes(ctx));
 
   app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {

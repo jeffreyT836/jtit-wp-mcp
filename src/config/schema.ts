@@ -88,6 +88,7 @@ export const dashboardEnvSchema = z.object({
     .optional()
     .transform((v) => v !== 'false'),
   WP_TIMEOUT_MS: z.coerce.number().int().positive().default(30000),
+  WP_UPDATE_TIMEOUT_MS: z.coerce.number().int().positive().default(300000),
 });
 
 export type DashboardEnv = z.output<typeof dashboardEnvSchema>;
