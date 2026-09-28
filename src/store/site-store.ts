@@ -14,7 +14,7 @@ import { decryptSecret, encryptSecret, SecretCryptoError } from './crypto.js';
 const DEFAULT_CONTAINER_DIR = '/app/data';
 const DEFAULT_LOCAL_PATH = './data/sites.db';
 const KEY_VERSION = 1;
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 /** Resolves the store path: `SITES_DB`, else `/app/data/sites.db` in the container, else `./data/sites.db`. */
 export function resolveSitesDbPath(env: NodeJS.ProcessEnv = process.env): string {
@@ -47,6 +47,7 @@ interface SiteRow {
   read_only: number;
   allow_http: number;
   bridge: number;
+  health_paths: string;
   secret: string | null;
   created_at: string;
   updated_at: string;
@@ -62,6 +63,7 @@ function rowToConfig(row: SiteRow): SiteConfig {
     readOnly: row.read_only === 1,
     allowHttp: row.allow_http === 1,
     bridge: row.bridge === 1,
+    healthPaths: JSON.parse(row.health_paths ?? '[]') as string[],
   };
 }
 
@@ -87,29 +89,49 @@ export class SiteStore {
   }
 
   private migrate(): void {
-    const { user_version: current } = this.db.prepare('PRAGMA user_version').get() as {
-      user_version: number;
-    };
-    if (current >= SCHEMA_VERSION) return;
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS sites (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        url TEXT NOT NULL,
-        username TEXT NOT NULL,
-        tags TEXT NOT NULL DEFAULT '[]',
-        read_only INTEGER NOT NULL DEFAULT 0,
-        allow_http INTEGER NOT NULL DEFAULT 0,
-        bridge INTEGER NOT NULL DEFAULT 1,
-        secret TEXT,
-        key_version INTEGER NOT NULL DEFAULT ${KEY_VERSION},
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value INTEGER NOT NULL);
-      INSERT OR IGNORE INTO meta (key, value) VALUES ('version', 0);
-      PRAGMA user_version = ${SCHEMA_VERSION};
-    `);
+    const version = () =>
+      (this.db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version;
+    if (version() >= SCHEMA_VERSION) return;
+    // The MCP and dashboard containers open the same file at the same time after a
+    // deploy: migrate under a write lock and re-read the version once we hold it.
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      this.migrateLocked(version());
+      this.db.exec('COMMIT');
+    } catch (err) {
+      this.db.exec('ROLLBACK');
+      throw err;
+    }
+  }
+
+  private migrateLocked(current: number): void {
+    if (current < 1) {
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS sites (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          url TEXT NOT NULL,
+          username TEXT NOT NULL,
+          tags TEXT NOT NULL DEFAULT '[]',
+          read_only INTEGER NOT NULL DEFAULT 0,
+          allow_http INTEGER NOT NULL DEFAULT 0,
+          bridge INTEGER NOT NULL DEFAULT 1,
+          secret TEXT,
+          key_version INTEGER NOT NULL DEFAULT ${KEY_VERSION},
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value INTEGER NOT NULL);
+        INSERT OR IGNORE INTO meta (key, value) VALUES ('version', 0);
+      `);
+    }
+    if (current < 2) {
+      // v2: extra pages checked after safe updates.
+      this.db.exec(`ALTER TABLE sites ADD COLUMN health_paths TEXT NOT NULL DEFAULT '[]'`);
+    }
+    if (current < SCHEMA_VERSION) {
+      this.db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
+    }
   }
 
   /** Monotonic counter, bumped by every mutation. */
@@ -175,12 +197,13 @@ export class SiteStore {
     this.transaction(() => {
       this.db
         .prepare(
-          `INSERT INTO sites (id, name, url, username, tags, read_only, allow_http, bridge, secret, key_version, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `INSERT INTO sites (id, name, url, username, tags, read_only, allow_http, bridge, health_paths, secret, key_version, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(id) DO UPDATE SET
              name = excluded.name, url = excluded.url, username = excluded.username,
              tags = excluded.tags, read_only = excluded.read_only,
              allow_http = excluded.allow_http, bridge = excluded.bridge,
+             health_paths = excluded.health_paths,
              secret = CASE WHEN ? THEN excluded.secret ELSE sites.secret END,
              key_version = excluded.key_version, updated_at = excluded.updated_at`,
         )
@@ -193,6 +216,7 @@ export class SiteStore {
           site.readOnly ? 1 : 0,
           site.allowHttp ? 1 : 0,
           site.bridge ? 1 : 0,
+          JSON.stringify(site.healthPaths),
           secret,
           KEY_VERSION,
           now,

@@ -8,6 +8,7 @@ import {
   latestUpdates,
   parseUpdateSelection,
   runUpdates,
+  SafeUpdatesUnsupportedError,
   updateErrorMessage,
   updatesSnapshotPayload,
   type UpdateItemResult,
@@ -99,10 +100,13 @@ export function updateRoutes(ctx: RouteContext): Router {
     try {
       db.audit(actor, 'updates_started', site.id, {
         core: selection.core, allowMajor: selection.allowMajor, plugins: selection.plugins.length,
-        themes: selection.themes.length, translations: selection.translations,
+        themes: selection.themes.length, translations: selection.translations, safe: selection.safe,
       });
-      results = await runUpdates(clientFor(ctx, site), selection, ctx.env.WP_UPDATE_TIMEOUT_MS);
+      results = await runUpdates(clientFor(ctx, site), selection, ctx.env.WP_UPDATE_TIMEOUT_MS, site.healthPaths);
       await snapshotLiveUpdates(site);
+    } catch (err) {
+      if (err instanceof SafeUpdatesUnsupportedError) return detailError(res, site.id, err.message, 409);
+      throw err;
     } finally {
       running.delete(site.id);
     }
@@ -113,6 +117,9 @@ export function updateRoutes(ctx: RouteContext): Router {
       failed: count('failed'),
       upToDate: count('up_to_date'),
       skipped: count('skipped'),
+      rolledBack: count('rolled_back'),
+      rollbackFailed: count('rollback_failed'),
+      safe: selection.safe,
       items: results.map((r) => `${r.kind}:${r.id}:${r.status}${r.to ? `@${r.to}` : ''}`).slice(0, 50),
     });
     renderPage(res, {

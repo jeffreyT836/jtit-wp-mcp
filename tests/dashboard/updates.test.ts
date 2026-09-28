@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { parseUpdateSelection, runUpdates } from '../../src/dashboard/updates.js';
+import { failedChecks, parseUpdateSelection, plainText, runUpdates, SafeUpdatesUnsupportedError } from '../../src/dashboard/updates.js';
 import { WpClient } from '../../src/wp/client.js';
 import { createMockFetch, jsonResponse, makeSite } from '../helpers/harness.js';
 import { csrfOf, loginAndEnroll, startApp, type TestApp } from './helpers.js';
@@ -12,14 +12,19 @@ interface Pending {
 }
 
 /** Stateful fake nb-mcp-bridge: pending updates disappear once applied. */
-function fakeBridge(initial: Pending) {
+function fakeBridge(initial: Pending, opts: { safeSupported?: boolean } = {}) {
   const state: Pending = structuredClone(initial);
   const calls: string[] = [];
+  const bodies: Array<Record<string, unknown>> = [];
   const fetch = createMockFetch(async (url, init) => {
     const { pathname } = new URL(url);
     const method = init?.method ?? 'GET';
     calls.push(`${method} ${pathname}`);
     const body = init?.body ? JSON.parse(String(init.body)) : {};
+    if (method === 'POST') bodies.push(body);
+    if (pathname.endsWith('/nb-mcp/v1/status')) {
+      return jsonResponse({ bridge_version: opts.safeSupported === false ? '1.0.7' : '1.1.0', ...(opts.safeSupported === false ? {} : { features: ['safe_updates'] }) });
+    }
     if (pathname.endsWith('/nb-mcp/v1/updates') && method === 'GET') {
       return jsonResponse({ checked_at: 'now', ...state, translations: { count: state.translations } });
     }
@@ -27,6 +32,20 @@ function fakeBridge(initial: Pending) {
       const results = (body.plugins as string[]).map((file) => {
         const p = state.plugins.find((x) => x.plugin === file)!;
         if (file === 'broken/broken.php') return { plugin: file, success: false, from: p.current_version, to: p.new_version, error: 'Download failed.' };
+        if (body.safe && file === 'fatal/fatal.php') {
+          return {
+            plugin: file, success: false, from: p.current_version, to: p.current_version,
+            error: 'Site unhealthy after update; restored from backup.', backup: 'created', rolled_back: true,
+            health: { ok: false, checks: [{ target: 'home', ok: false, status: 500, error: 'Page shows a PHP fatal error.' }, { target: '/winkel', ok: false, status: 404, ignored: true }] },
+          };
+        }
+        if (body.safe && file === 'stuck/stuck.php') {
+          return {
+            plugin: file, success: false, from: p.current_version, to: p.current_version, backup: 'created', rolled_back: true,
+            rollback_error: 'Site still unhealthy after restoring the backup.', backup_path: 'wp-content/nb-mcp-backups/x/plugins/stuck',
+            health: { ok: false, checks: [{ target: 'error_log', ok: false, error: '<b>PHP Fatal error</b> in x.php' }] },
+          };
+        }
         state.plugins = state.plugins.filter((x) => x.plugin !== file);
         return { plugin: file, success: true, from: p.current_version, to: p.new_version };
       });
@@ -53,7 +72,7 @@ function fakeBridge(initial: Pending) {
     }
     return jsonResponse({ code: 'rest_no_route', message: 'no route' }, { status: 404 });
   });
-  return { fetch, state, calls };
+  return { fetch, state, calls, bodies };
 }
 
 const PENDING: Pending = {
@@ -73,8 +92,9 @@ const PENDING: Pending = {
 describe('parseUpdateSelection', () => {
   it('normalizes single values, arrays and duplicates', () => {
     expect(parseUpdateSelection({ core: 'on', plugins: 'a/a.php', themes: ['x', 'x', ''] })).toEqual({
-      core: true, allowMajor: false, plugins: ['a/a.php'], themes: ['x'], translations: false,
+      core: true, allowMajor: false, plugins: ['a/a.php'], themes: ['x'], translations: false, safe: false,
     });
+    expect(parseUpdateSelection({ safe: 'on' }).safe).toBe(true);
   });
 
   it('rejects oversized selections', () => {
@@ -127,6 +147,49 @@ describe('runUpdates', () => {
   });
 });
 
+describe('safe updates', () => {
+  const SAFE_PENDING: Pending = {
+    ...PENDING,
+    plugins: [
+      ...PENDING.plugins,
+      { plugin: 'fatal/fatal.php', name: 'Fatal', current_version: '1.0', new_version: '2.0' },
+      { plugin: 'stuck/stuck.php', name: 'Stuck', current_version: '1.0', new_version: '2.0' },
+    ],
+  };
+  const sel = (plugins: string[]) => ({ core: false, allowMajor: false, plugins, themes: [], translations: false, safe: true });
+
+  it('refuses when the bridge does not support safe updates, before changing anything', async () => {
+    const bridge = fakeBridge(SAFE_PENDING, { safeSupported: false });
+    const client = new WpClient(makeSite({ id: 'a' }), { fetch: bridge.fetch });
+    await expect(runUpdates(client, sel(['akismet/akismet.php']), 5000)).rejects.toBeInstanceOf(SafeUpdatesUnsupportedError);
+    expect(bridge.bodies).toEqual([]);
+  });
+
+  it('sends one request per item with safe + health paths and maps rollbacks', async () => {
+    const bridge = fakeBridge(SAFE_PENDING);
+    const client = new WpClient(makeSite({ id: 'a' }), { fetch: bridge.fetch });
+    const results = await runUpdates(client, sel(['akismet/akismet.php', 'fatal/fatal.php', 'stuck/stuck.php']), 5000, ['/winkel']);
+    expect(bridge.bodies).toEqual([
+      { plugins: ['akismet/akismet.php'], safe: true, health_paths: ['/winkel'] },
+      { plugins: ['fatal/fatal.php'], safe: true, health_paths: ['/winkel'] },
+      { plugins: ['stuck/stuck.php'], safe: true, health_paths: ['/winkel'] },
+    ]);
+    expect(results.map((r) => [r.id, r.status])).toEqual([
+      ['akismet/akismet', 'updated'],
+      ['fatal/fatal', 'rolled_back'],
+      ['stuck/stuck', 'rollback_failed'],
+    ]);
+    expect(results[1]!.message).toBe('Fouten na de update, automatisch teruggezet (homepage: Page shows a PHP fatal error.).');
+    expect(results[2]!.message).toContain('errorlog: PHP Fatal error in x.php');
+    expect(results[2]!.message).toContain('wp-content/nb-mcp-backups/x/plugins/stuck');
+  });
+
+  it('strips markup from WordPress messages and summarizes failed checks', () => {
+    expect(plainText('<strong>Fout:</strong> onbekende   gebruikersnaam.')).toBe('Fout: onbekende gebruikersnaam.');
+    expect(failedChecks([{ target: 'login', ok: false, status: 502 }, { target: '/x', ok: false, ignored: true }, { target: 'home', ok: true }])).toBe('inlogpagina: HTTP 502');
+  });
+});
+
 describe('dashboard update flow', () => {
   let app: TestApp;
   let bridge: ReturnType<typeof fakeBridge>;
@@ -155,6 +218,7 @@ describe('dashboard update flow', () => {
     expect(page).toContain('Major-versie toestaan');
     expect(page).toContain('3 vertaling(en) bijwerken');
     expect(page).toContain('src="/assets/app.js"');
+    expect(page).toMatch(/name="safe" checked/);
     expect(app.db.recentAudit().map((a) => a.action)).toContain('updates_checked');
   });
 
@@ -207,6 +271,36 @@ describe('dashboard update flow', () => {
     expect(await second.text()).toContain('Er loopt al een update');
     release();
     expect((await first).status).toBe(200);
+  });
+
+  it('shows rollbacks on the result page and refuses safe mode on an old bridge', async () => {
+    const browser = await loginAndEnroll(app.base);
+    const csrf = csrfOf(await (await browser.get('/sites/klant-a')).text());
+    const res = await browser.post('/sites/klant-a/updates', { _csrf: csrf, confirm: 'on', safe: 'on', plugins: ['akismet/akismet.php'] });
+    expect(await res.text()).toContain('Alle 1 onderdelen zijn verwerkt.');
+    expect(JSON.parse(app.db.recentAudit().find((a) => a.action === 'updates_run')!.details!)).toMatchObject({ safe: true, rolledBack: 0 });
+
+    await app.close();
+    bridge = fakeBridge(PENDING, { safeSupported: false });
+    app = await startApp(bridge.fetch);
+    app.store.upsert({ id: 'klant-a', name: 'Klant A', url: 'https://klant-a.nl', username: 'mcp-bot' }, 'pw');
+    const b2 = await loginAndEnroll(app.base);
+    const csrf2 = csrfOf(await (await b2.get('/sites/klant-a')).text());
+    const old = await b2.post('/sites/klant-a/updates', { _csrf: csrf2, confirm: 'on', safe: 'on', core: 'on' });
+    expect(old.status).toBe(409);
+    expect(await old.text()).toContain('ondersteunt nog geen veilig updaten');
+    expect(bridge.bodies).toEqual([]);
+  });
+
+  it('saves extra health paths from the site form and rejects invalid ones', async () => {
+    const browser = await loginAndEnroll(app.base);
+    const edit = await (await browser.get('/sites/klant-a/edit')).text();
+    const fields = { _csrf: csrfOf(edit), name: 'Klant A', url: 'https://klant-a.nl', username: 'mcp-bot', bridge: 'on', skipTest: 'on' };
+    const bad = await browser.post('/sites/klant-a', { ...fields, healthPaths: 'https://evil.example' });
+    expect(bad.status).toBe(422);
+    await browser.post('/sites/klant-a', { ...fields, healthPaths: '/winkel\r\n\r\n/contact' });
+    expect(app.store.list()[0]!.healthPaths).toEqual(['/winkel', '/contact']);
+    expect(await (await browser.get('/sites/klant-a/edit')).text()).toContain('/winkel\n/contact</textarea>');
   });
 
   it('refuses updates on read-only sites', async () => {

@@ -56,6 +56,7 @@ describe('resolveSite', () => {
     readOnly: false,
     allowHttp: false,
     bridge: true,
+    healthPaths: [],
   };
 
   it('is available with a password and https url', () => {
@@ -90,6 +91,7 @@ describe('loadLegacySitesFile', () => {
       readOnly: false,
       allowHttp: false,
       bridge: true,
+      healthPaths: [],
     });
   });
 

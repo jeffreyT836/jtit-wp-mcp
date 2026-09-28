@@ -214,21 +214,59 @@ export function isCoreNoUpdate(data: { success?: boolean; from?: string; to?: st
   );
 }
 
+/** One health check the bridge ran after a safe update (bridge 1.1.0+). */
+export interface BridgeHealthCheck {
+  target: string;
+  ok: boolean;
+  status?: number;
+  error?: string;
+  /** Already failing before the update, so it does not count. */
+  ignored?: boolean;
+  /** Error log only: whether a readable log was found. */
+  available?: boolean;
+}
+
+/** Extra fields a bridge 1.1.0+ adds to every result row in safe mode. */
+export interface BridgeSafeFields {
+  backup?: 'created' | 'none' | 'failed';
+  health?: { ok: boolean; checks: BridgeHealthCheck[] };
+  rolled_back?: boolean;
+  rollback_error?: string;
+  backup_path?: string;
+}
+
+export interface BridgeUpdateRow extends BridgeSafeFields {
+  success: boolean;
+  from?: string;
+  to?: string;
+  error?: string;
+  no_update?: boolean;
+}
+
 export interface BridgePluginUpdateResponse {
-  results?: Array<{ plugin: string; success: boolean; from?: string; to?: string; error?: string; no_update?: boolean }>;
+  results?: Array<BridgeUpdateRow & { plugin: string }>;
 }
 
 export interface BridgeThemeUpdateResponse {
-  results?: Array<{ theme: string; success: boolean; from?: string; to?: string; error?: string; no_update?: boolean }>;
+  results?: Array<BridgeUpdateRow & { theme: string }>;
 }
 
-export interface BridgeCoreUpdateResponse {
+export interface BridgeCoreUpdateResponse extends BridgeSafeFields {
   success?: boolean;
   from?: string;
   to?: string;
   error?: string;
   no_update?: boolean;
 }
+
+/** Safe mode: backup → update → health check → automatic restore, on the server (bridge 1.1.0+). */
+export interface SafeUpdateOptions {
+  safe?: boolean;
+  healthPaths?: string[];
+}
+
+const safeBody = (opts: SafeUpdateOptions = {}) =>
+  opts.safe ? { safe: true, health_paths: opts.healthPaths ?? [] } : {};
 
 export interface BridgeTranslationUpdateResponse {
   success?: boolean;
@@ -240,28 +278,43 @@ export interface BridgeTranslationUpdateResponse {
 }
 
 /** `POST /updates/plugins` for plugin files that were resolved as having a pending update. */
-export function postPluginUpdates(client: WpClient, files: string[], timeoutMs: number): Promise<BridgePluginUpdateResponse> {
+export function postPluginUpdates(
+  client: WpClient,
+  files: string[],
+  timeoutMs: number,
+  opts?: SafeUpdateOptions,
+): Promise<BridgePluginUpdateResponse> {
   return client.bridge<BridgePluginUpdateResponse>('/updates/plugins', {
     method: 'POST',
-    body: { plugins: files },
+    body: { plugins: files, ...safeBody(opts) },
     timeoutMs,
   });
 }
 
 /** `POST /updates/themes` for stylesheets that were resolved as having a pending update. */
-export function postThemeUpdates(client: WpClient, stylesheets: string[], timeoutMs: number): Promise<BridgeThemeUpdateResponse> {
+export function postThemeUpdates(
+  client: WpClient,
+  stylesheets: string[],
+  timeoutMs: number,
+  opts?: SafeUpdateOptions,
+): Promise<BridgeThemeUpdateResponse> {
   return client.bridge<BridgeThemeUpdateResponse>('/updates/themes', {
     method: 'POST',
-    body: { themes: stylesheets },
+    body: { themes: stylesheets, ...safeBody(opts) },
     timeoutMs,
   });
 }
 
 /** `POST /updates/core`; the bridge applies the same selection rules as {@link selectCoreUpdate}. */
-export function postCoreUpdate(client: WpClient, allowMajor: boolean, timeoutMs: number): Promise<BridgeCoreUpdateResponse> {
+export function postCoreUpdate(
+  client: WpClient,
+  allowMajor: boolean,
+  timeoutMs: number,
+  opts?: SafeUpdateOptions,
+): Promise<BridgeCoreUpdateResponse> {
   return client.bridge<BridgeCoreUpdateResponse>('/updates/core', {
     method: 'POST',
-    body: { allow_major: allowMajor },
+    body: { allow_major: allowMajor, ...safeBody(opts) },
     timeoutMs,
   });
 }
@@ -269,4 +322,10 @@ export function postCoreUpdate(client: WpClient, allowMajor: boolean, timeoutMs:
 /** `POST /updates/translations`. */
 export function postTranslationUpdates(client: WpClient, timeoutMs: number): Promise<BridgeTranslationUpdateResponse> {
   return client.bridge<BridgeTranslationUpdateResponse>('/updates/translations', { method: 'POST', timeoutMs });
+}
+
+/** `GET /status` — used to check whether the installed bridge supports safe updates. */
+export async function bridgeSupportsSafeUpdates(client: WpClient): Promise<{ ok: boolean; version?: string }> {
+  const status = await client.bridge<{ bridge_version?: string; features?: string[] }>('/status');
+  return { ok: (status.features ?? []).includes('safe_updates'), version: status.bridge_version };
 }

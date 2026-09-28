@@ -59,6 +59,8 @@ const obj = (v: unknown): Json | undefined =>
   v && typeof v === 'object' && !Array.isArray(v) ? (v as Json) : undefined;
 const str = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined);
 const len = (v: unknown): number => (Array.isArray(v) ? v.length : 0);
+/** WordPress error messages can contain markup ("<strong>Fout:</strong>"). */
+const stripTags = (v: string): string => v.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
 
 /** Derives a display status from a site's latest `fleet_health` / `fleet_updates_report` snapshots. */
 export function summarizeSite(snapshots: SnapshotRow[]): SiteStatus {
@@ -82,11 +84,12 @@ export function summarizeSite(snapshots: SnapshotRow[]): SiteStatus {
       const versions = obj(data?.versions);
       status.wpVersion = str(versions?.wp_version);
       status.phpVersion = str(versions?.php_version);
-      status.error = str(data?.error) ?? str(parsed.error);
+      const error = str(data?.error) ?? str(parsed.error);
+      status.error = error ? stripTags(error) : undefined;
     } else if (snap.kind === 'fleet_updates_report') {
       status.collectedAt = newest(status.collectedAt, snap.collected_at);
       if (parsed.ok !== true || !data) {
-        status.updatesError = str(parsed.error) ?? 'onbekende fout';
+        status.updatesError = stripTags(str(parsed.error) ?? 'onbekende fout');
         continue;
       }
       const core = Array.isArray(data.core)

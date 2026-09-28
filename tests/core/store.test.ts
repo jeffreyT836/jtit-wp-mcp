@@ -2,6 +2,7 @@ import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
+import { DatabaseSync } from 'node:sqlite';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   decryptSecret,
@@ -149,6 +150,42 @@ describe('SiteStore', () => {
     const loaded = open(path, randomBytes(32)).load();
     expect(loaded[0]).toMatchObject({ available: false, password: null });
     expect(loaded[0]?.unavailableReason).toMatch(/SITES_ENCRYPTION_KEY/);
+  });
+
+  it('stores and validates extra health check paths', () => {
+    const store = open();
+    expect(store.upsert({ ...site, healthPaths: ['/winkel', '/contact?x=1'] }, 'pw').healthPaths).toEqual(['/winkel', '/contact?x=1']);
+    for (const bad of ['winkel', '//evil.example', 'https://evil.example', '/met spatie']) {
+      expect(() => store.upsert({ ...site, healthPaths: [bad] })).toThrow(SiteStoreError);
+    }
+    expect(() => store.upsert({ ...site, healthPaths: Array.from({ length: 11 }, (_, i) => `/p${i}`) })).toThrow(SiteStoreError);
+  });
+
+  it('migrates a v1 database (before healthPaths) without losing sites or secrets', () => {
+    const path = tempDbPath();
+    const v1 = open(path);
+    v1.upsert(site, 'pw');
+    // Simulate the v1 schema: drop the v2 column and reset the schema version.
+    v1.close();
+    const raw = new DatabaseSync(path);
+    raw.exec('ALTER TABLE sites DROP COLUMN health_paths; PRAGMA user_version = 1;');
+    raw.close();
+    const migrated = open(path);
+    expect(migrated.load()[0]).toMatchObject({ id: 'klant-a', password: 'pw', healthPaths: [] });
+  });
+
+  it('migrates safely when two processes open the same v1 database', () => {
+    const path = tempDbPath();
+    const v1 = open(path);
+    v1.upsert(site, 'pw');
+    v1.close();
+    const raw = new DatabaseSync(path);
+    raw.exec('ALTER TABLE sites DROP COLUMN health_paths; PRAGMA user_version = 1;');
+    raw.close();
+    const a = open(path);
+    const b = open(path);
+    expect(a.list()).toHaveLength(1);
+    expect(b.load()[0]).toMatchObject({ healthPaths: [], password: 'pw' });
   });
 
   it('lets a registry in another connection pick up changes without restart', () => {

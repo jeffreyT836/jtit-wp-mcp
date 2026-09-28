@@ -5,7 +5,7 @@
  * Description:       Companion mu-plugin for wp-fleet-mcp. Exposes REST endpoints
  *                     (namespace nb-mcp/v1) for status, update management and role
  *                     information that WordPress core REST does not provide.
- * Version:           1.0.7
+ * Version:           1.1.0
  * Requires at least: 6.0
  * Requires PHP:      7.4
  * Author:            wp-fleet-mcp
@@ -18,7 +18,7 @@
 defined( 'ABSPATH' ) || exit;
 
 // Reported by GET /nb-mcp/v1/status; keep in sync with the "Version" header above.
-define( 'NB_MCP_BRIDGE_VERSION', '1.0.7' );
+define( 'NB_MCP_BRIDGE_VERSION', '1.1.0' );
 
 /**
  * Register all nb-mcp/v1 REST routes.
@@ -42,6 +42,18 @@ function nb_mcp_bridge_register_routes() {
 		'sanitize_callback' => 'nb_mcp_bridge_sanitize_string_array',
 	);
 
+	// Safe updates (1.1.0): backup + health check + automatic restore.
+	$safe_args = array(
+		'safe'         => $boolean_arg(),
+		'health_paths' => array(
+			'type'              => 'array',
+			'required'          => false,
+			'default'           => array(),
+			'items'             => array( 'type' => 'string' ),
+			'validate_callback' => 'nb_mcp_bridge_validate_health_paths',
+		),
+	);
+
 	register_rest_route( 'nb-mcp/v1', '/status', array(
 		'methods'             => WP_REST_Server::READABLE,
 		'callback'            => 'nb_mcp_bridge_get_status',
@@ -59,21 +71,21 @@ function nb_mcp_bridge_register_routes() {
 		'methods'             => WP_REST_Server::CREATABLE,
 		'callback'            => 'nb_mcp_bridge_update_plugins',
 		'permission_callback' => nb_mcp_bridge_permission_callback( 'update_plugins' ),
-		'args'                => array( 'plugins' => $string_array_arg ),
+		'args'                => array_merge( array( 'plugins' => $string_array_arg ), $safe_args ),
 	) );
 
 	register_rest_route( 'nb-mcp/v1', '/updates/themes', array(
 		'methods'             => WP_REST_Server::CREATABLE,
 		'callback'            => 'nb_mcp_bridge_update_themes',
 		'permission_callback' => nb_mcp_bridge_permission_callback( 'update_themes' ),
-		'args'                => array( 'themes' => $string_array_arg ),
+		'args'                => array_merge( array( 'themes' => $string_array_arg ), $safe_args ),
 	) );
 
 	register_rest_route( 'nb-mcp/v1', '/updates/core', array(
 		'methods'             => WP_REST_Server::CREATABLE,
 		'callback'            => 'nb_mcp_bridge_update_core',
 		'permission_callback' => nb_mcp_bridge_permission_callback( 'update_core' ),
-		'args'                => array( 'allow_major' => $boolean_arg() ),
+		'args'                => array_merge( array( 'allow_major' => $boolean_arg() ), $safe_args ),
 	) );
 
 	register_rest_route( 'nb-mcp/v1', '/updates/translations', array(
@@ -318,6 +330,7 @@ function nb_mcp_bridge_get_status() {
 
 	$response = array(
 		'bridge_version' => NB_MCP_BRIDGE_VERSION,
+		'features'       => array( 'safe_updates' ),
 		'wp_version'     => get_bloginfo( 'version' ),
 		'php_version'    => PHP_VERSION,
 		'mysql_version'  => is_callable( array( $wpdb, 'db_version' ) ) ? $wpdb->db_version() : '',
@@ -593,33 +606,65 @@ function nb_mcp_bridge_update_plugins( WP_REST_Request $request ) {
 		$active_before[ $plugin_file ] = is_plugin_active( $plugin_file );
 	}
 
-	$results = nb_mcp_bridge_run_bulk_upgrade(
-		$requested,
-		'plugin',
-		function ( $id ) use ( $known_before ) {
-			return isset( $known_before[ $id ] );
-		},
-		function ( $id ) use ( $pending_updates ) {
-			return isset( $pending_updates[ $id ] );
-		},
-		function ( $id ) use ( $known_before ) {
-			return isset( $known_before[ $id ]['Version'] ) ? $known_before[ $id ]['Version'] : '';
-		},
-		function ( $id ) use ( &$known_after ) {
-			return isset( $known_after[ $id ]['Version'] ) ? $known_after[ $id ]['Version'] : '';
-		},
-		'Plugin_Upgrader',
-		function () use ( &$known_after ) {
-			wp_clean_plugins_cache( true );
-			$known_after = get_plugins();
-		},
-		function ( $id ) use ( $active_before ) {
-			// Re-activate if the upgrade process deactivated a plugin that was active.
-			if ( ! empty( $active_before[ $id ] ) && ! is_plugin_active( $id ) && file_exists( WP_PLUGIN_DIR . '/' . $id ) ) {
-				activate_plugin( $id, '', is_plugin_active_for_network( $id ), true );
+	$run = function ( $items ) use ( &$known_after, $known_before, $pending_updates, $active_before ) {
+			return nb_mcp_bridge_run_bulk_upgrade(
+			$items,
+			'plugin',
+			function ( $id ) use ( $known_before ) {
+				return isset( $known_before[ $id ] );
+			},
+			function ( $id ) use ( $pending_updates ) {
+				return isset( $pending_updates[ $id ] );
+			},
+			function ( $id ) use ( $known_before ) {
+				return isset( $known_before[ $id ]['Version'] ) ? $known_before[ $id ]['Version'] : '';
+			},
+			function ( $id ) use ( &$known_after ) {
+				return isset( $known_after[ $id ]['Version'] ) ? $known_after[ $id ]['Version'] : '';
+			},
+			'Plugin_Upgrader',
+			function () use ( &$known_after ) {
+				wp_clean_plugins_cache( true );
+				$known_after = get_plugins();
+			},
+			function ( $id ) use ( $active_before ) {
+				// Re-activate if the upgrade process deactivated a plugin that was active.
+				if ( ! empty( $active_before[ $id ] ) && ! is_plugin_active( $id ) && file_exists( WP_PLUGIN_DIR . '/' . $id ) ) {
+					activate_plugin( $id, '', is_plugin_active_for_network( $id ), true );
+				}
 			}
-		}
-	);
+		);
+	};
+
+	if ( ! $request->get_param( 'safe' ) ) {
+		return rest_ensure_response( array( 'results' => $run( $requested ) ) );
+	}
+
+	$paths    = (array) $request->get_param( 'health_paths' );
+	$baseline = nb_mcp_bridge_safe_baseline( $paths );
+	if ( is_wp_error( $baseline ) ) {
+		return $baseline;
+	}
+	$results = array();
+	foreach ( $requested as $plugin_file ) {
+		$results[] = nb_mcp_bridge_safe_update_item(
+			'plugin',
+			$plugin_file,
+			$baseline,
+			$paths,
+			function () use ( $run, $plugin_file ) {
+				$rows = $run( array( $plugin_file ) );
+				return $rows[0];
+			},
+			function () use ( $plugin_file, $active_before ) {
+				wp_clean_plugins_cache( true );
+				if ( ! empty( $active_before[ $plugin_file ] ) && ! is_plugin_active( $plugin_file ) && file_exists( WP_PLUGIN_DIR . '/' . $plugin_file ) ) {
+					activate_plugin( $plugin_file, '', is_plugin_active_for_network( $plugin_file ), true );
+				}
+			}
+		);
+	}
+	nb_mcp_bridge_finish_backup_run();
 
 	return rest_ensure_response( array( 'results' => $results ) );
 }
@@ -650,26 +695,55 @@ function nb_mcp_bridge_update_themes( WP_REST_Request $request ) {
 
 	$pending_updates = get_theme_updates();
 
-	$results = nb_mcp_bridge_run_bulk_upgrade(
-		$requested,
-		'theme',
-		function ( $id ) {
-			return wp_get_theme( $id )->exists();
-		},
-		function ( $id ) use ( $pending_updates ) {
-			return isset( $pending_updates[ $id ] );
-		},
-		function ( $id ) {
-			return wp_get_theme( $id )->get( 'Version' );
-		},
-		function ( $id ) {
-			return wp_get_theme( $id )->get( 'Version' );
-		},
-		'Theme_Upgrader',
-		function () {
-			wp_clean_themes_cache( true );
-		}
-	);
+	$run = function ( $items ) use ( $pending_updates ) {
+			return nb_mcp_bridge_run_bulk_upgrade(
+			$items,
+			'theme',
+			function ( $id ) {
+				return wp_get_theme( $id )->exists();
+			},
+			function ( $id ) use ( $pending_updates ) {
+				return isset( $pending_updates[ $id ] );
+			},
+			function ( $id ) {
+				return wp_get_theme( $id )->get( 'Version' );
+			},
+			function ( $id ) {
+				return wp_get_theme( $id )->get( 'Version' );
+			},
+			'Theme_Upgrader',
+			function () {
+				wp_clean_themes_cache( true );
+			}
+		);
+	};
+
+	if ( ! $request->get_param( 'safe' ) ) {
+		return rest_ensure_response( array( 'results' => $run( $requested ) ) );
+	}
+
+	$paths    = (array) $request->get_param( 'health_paths' );
+	$baseline = nb_mcp_bridge_safe_baseline( $paths );
+	if ( is_wp_error( $baseline ) ) {
+		return $baseline;
+	}
+	$results = array();
+	foreach ( $requested as $stylesheet ) {
+		$results[] = nb_mcp_bridge_safe_update_item(
+			'theme',
+			$stylesheet,
+			$baseline,
+			$paths,
+			function () use ( $run, $stylesheet ) {
+				$rows = $run( array( $stylesheet ) );
+				return $rows[0];
+			},
+			function () {
+				wp_clean_themes_cache( true );
+			}
+		);
+	}
+	nb_mcp_bridge_finish_backup_run();
 
 	return rest_ensure_response( array( 'results' => $results ) );
 }
@@ -892,6 +966,29 @@ function nb_mcp_bridge_update_core( WP_REST_Request $request ) {
 	// transient instead of get_core_updates()).
 	$to_version = $update->current;
 
+	$safe       = (bool) $request->get_param( 'safe' );
+	$paths      = (array) $request->get_param( 'health_paths' );
+	$is_major   = nb_mcp_bridge_is_major_version_change( $from, $to_version );
+	$baseline   = null;
+	$backup_dir = null;
+	$log_mark   = null;
+	$db_before  = get_option( 'db_version' );
+
+	if ( $safe ) {
+		$baseline = nb_mcp_bridge_safe_baseline( $paths );
+		if ( is_wp_error( $baseline ) ) {
+			return $baseline;
+		}
+		// Major updates are only checked, never automatically restored.
+		if ( ! $is_major ) {
+			$backup_dir = nb_mcp_bridge_backup_core();
+			if ( is_wp_error( $backup_dir ) ) {
+				return rest_ensure_response( array( 'success' => false, 'from' => $from, 'to' => $from, 'error' => 'Backup failed, update not run: ' . $backup_dir->get_error_message(), 'backup' => 'failed', 'rolled_back' => false ) );
+			}
+		}
+		$log_mark = nb_mcp_bridge_error_log_mark();
+	}
+
 	$skin     = new WP_Ajax_Upgrader_Skin();
 	$upgrader = new Core_Upgrader( $skin );
 	$result   = $upgrader->upgrade( $update );
@@ -914,16 +1011,96 @@ function nb_mcp_bridge_update_core( WP_REST_Request $request ) {
 		$error    = ! empty( $messages ) ? implode( ' ', (array) $messages ) : __( 'Core update did not complete.', 'nb-mcp-bridge' );
 	}
 
-	return rest_ensure_response(
-		nb_mcp_bridge_trim_empty_error(
-			array(
-				'success' => $success,
-				'from'    => $from,
-				'to'      => $to,
-				'error'   => $error,
-			)
-		)
+	$row = array(
+		'success' => $success,
+		'from'    => $from,
+		'to'      => $to,
+		'error'   => $error,
 	);
+	if ( $safe ) {
+		$row = nb_mcp_bridge_safe_core_outcome( $row, $paths, $baseline, $log_mark, $backup_dir, $is_major, $db_before );
+		nb_mcp_bridge_finish_backup_run();
+	}
+
+	return rest_ensure_response( nb_mcp_bridge_trim_empty_error( $row ) );
+}
+
+/**
+ * Backs up WordPress core files (wp-admin, wp-includes, root PHP files except
+ * wp-config.php) before a minor core update.
+ *
+ * @return string|WP_Error Backup directory.
+ */
+function nb_mcp_bridge_backup_core() {
+	global $wp_filesystem;
+	$run_dir = nb_mcp_bridge_backup_run_dir();
+	if ( is_wp_error( $run_dir ) ) {
+		return $run_dir;
+	}
+	$dir = $run_dir . '/core';
+	foreach ( nb_mcp_bridge_core_entries() as $entry ) {
+		$copied = nb_mcp_bridge_copy_path( ABSPATH . $entry, $dir . '/' . $entry );
+		if ( is_wp_error( $copied ) ) {
+			$wp_filesystem->delete( $dir, true );
+			return $copied;
+		}
+	}
+	return $dir;
+}
+
+/**
+ * Health check after a core update and, for minor updates, restore on failure.
+ */
+function nb_mcp_bridge_safe_core_outcome( $row, $paths, $baseline, $log_mark, $backup_dir, $is_major, $db_before ) {
+	global $wp_filesystem;
+
+	$health = nb_mcp_bridge_health_check( $paths, $baseline, $log_mark );
+	$row    = array_merge( $row, array( 'backup' => $backup_dir ? 'created' : 'none', 'health' => $health, 'rolled_back' => false ) );
+
+	if ( $health['ok'] ) {
+		if ( $backup_dir ) {
+			$wp_filesystem->delete( $backup_dir, true );
+		}
+		return $row;
+	}
+
+	if ( ! $backup_dir ) {
+		$row['success']        = false;
+		$row['rollback_error'] = 'Site unhealthy after a major core update. Major updates are not restored automatically; check the site now.';
+		return $row;
+	}
+
+	$restore_error = null;
+	foreach ( nb_mcp_bridge_core_entries() as $entry ) {
+		if ( ! $wp_filesystem->exists( $backup_dir . '/' . $entry ) ) {
+			// A root PHP file the update added (never wp-config.php, see core_entries()).
+			if ( '.php' === substr( $entry, -4 ) ) {
+				$wp_filesystem->delete( ABSPATH . $entry );
+			}
+			continue;
+		}
+		$restored = nb_mcp_bridge_restore_path( $backup_dir . '/' . $entry, ABSPATH . $entry );
+		if ( is_wp_error( $restored ) ) {
+			$restore_error = $restored->get_error_message();
+		}
+	}
+	$after = nb_mcp_bridge_health_check( $paths, $baseline );
+
+	$row['success']     = false;
+	$row['to']          = $row['from'];
+	$row['error']       = 'Site unhealthy after core update; core files restored from backup.';
+	$row['rolled_back'] = null === $restore_error;
+	if ( get_option( 'db_version' ) !== $db_before ) {
+		$row['error'] .= ' Note: the database was already upgraded and was not restored.';
+	}
+	if ( null !== $restore_error || ! $after['ok'] ) {
+		$row['rollback_error']       = null !== $restore_error ? 'Restore failed: ' . $restore_error : 'Site still unhealthy after restoring core files.';
+		$row['backup_path']          = nb_mcp_bridge_relative_path( $backup_dir );
+		$row['health_after_restore'] = $after;
+	} else {
+		$wp_filesystem->delete( $backup_dir, true );
+	}
+	return $row;
 }
 
 /**
@@ -1097,3 +1274,563 @@ function nb_mcp_bridge_get_roles( WP_REST_Request $request ) {
 
 	return rest_ensure_response( array( 'roles' => $roles ) );
 }
+
+/*
+ * ---------------------------------------------------------------------------
+ * Safe updates (since 1.1.0): backup → update → health check → restore.
+ *
+ * Everything happens inside the single REST request that performs the update:
+ * if an update makes the site fatal, the REST API (and so any later "undo"
+ * request) would be broken too, but this request still runs the old code from
+ * memory and can put the old files back. Same principle as WordPress' own
+ * rollback of failed automatic updates (6.6+).
+ * ---------------------------------------------------------------------------
+ */
+
+define( 'NB_MCP_BRIDGE_BACKUP_DIRNAME', 'nb-mcp-backups' );
+define( 'NB_MCP_BRIDGE_MAX_HEALTH_PATHS', 10 );
+
+/**
+ * Validate the optional `health_paths` parameter: site-relative paths only
+ * ("/shop"), so the health check can never be pointed at another host.
+ *
+ * @return true|WP_Error
+ */
+function nb_mcp_bridge_validate_health_paths( $value, $request, $param ) {
+	if ( null === $value ) {
+		return true;
+	}
+	if ( ! is_array( $value ) || count( $value ) > NB_MCP_BRIDGE_MAX_HEALTH_PATHS ) {
+		return new WP_Error(
+			'nb_mcp_invalid_params',
+			sprintf( 'The "%s" parameter must be an array of at most %d paths.', $param, NB_MCP_BRIDGE_MAX_HEALTH_PATHS ),
+			array( 'status' => 400 )
+		);
+	}
+	foreach ( $value as $path ) {
+		if ( ! nb_mcp_bridge_is_valid_health_path( $path ) ) {
+			return new WP_Error(
+				'nb_mcp_invalid_params',
+				sprintf( 'Invalid health check path in "%s": paths must start with a single "/" and contain no spaces.', $param ),
+				array( 'status' => 400 )
+			);
+		}
+	}
+	return true;
+}
+
+/**
+ * @param mixed $path
+ * @return bool
+ */
+function nb_mcp_bridge_is_valid_health_path( $path ) {
+	return is_string( $path )
+		&& strlen( $path ) <= 200
+		&& 1 === preg_match( '#^/(?!/)[^\s\\\\]*$#', $path );
+}
+
+/**
+ * Absolute path of the directory holding safe-update backups. Prefers a
+ * directory outside the web root (backed-up PHP files must never be reachable
+ * by URL; nginx hosts such as Kinsta ignore .htaccess), falling back to
+ * wp-content with an unguessable run directory name. Override with the
+ * NB_MCP_BRIDGE_BACKUP_DIR constant.
+ */
+function nb_mcp_bridge_backup_root() {
+	static $root = null;
+	if ( null !== $root ) {
+		return $root;
+	}
+	if ( defined( 'NB_MCP_BRIDGE_BACKUP_DIR' ) && is_string( NB_MCP_BRIDGE_BACKUP_DIR ) && '' !== NB_MCP_BRIDGE_BACKUP_DIR ) {
+		$root = untrailingslashit( NB_MCP_BRIDGE_BACKUP_DIR );
+		return $root;
+	}
+	$outside = dirname( untrailingslashit( ABSPATH ) ) . '/' . NB_MCP_BRIDGE_BACKUP_DIRNAME;
+	if ( @is_dir( $outside ) ? @is_writable( $outside ) : @is_writable( dirname( $outside ) ) ) { // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+		$root = $outside;
+		return $root;
+	}
+	$root = trailingslashit( WP_CONTENT_DIR ) . NB_MCP_BRIDGE_BACKUP_DIRNAME;
+	return $root;
+}
+
+/**
+ * Creates (once per request) an unguessable run directory for backups, and
+ * makes sure the backup root cannot be listed or served.
+ *
+ * @return string|WP_Error Absolute path of the run directory.
+ */
+function nb_mcp_bridge_backup_run_dir( $peek = false ) {
+	global $wp_filesystem;
+	static $run_dir = null;
+
+	if ( null !== $run_dir || $peek ) {
+		return $run_dir;
+	}
+
+	$root = nb_mcp_bridge_backup_root();
+	if ( ! $wp_filesystem->is_dir( $root ) && ! $wp_filesystem->mkdir( $root, FS_CHMOD_DIR ) ) {
+		return new WP_Error( 'nb_mcp_backup_failed', 'Could not create the backup directory in wp-content.', array( 'status' => 500 ) );
+	}
+	$wp_filesystem->put_contents( $root . '/index.php', "<?php\n// Silence is golden.\n", FS_CHMOD_FILE );
+	$wp_filesystem->put_contents( $root . '/.htaccess', "Require all denied\nDeny from all\n", FS_CHMOD_FILE );
+
+	// Random name: some hosts (nginx, e.g. Kinsta) ignore .htaccess.
+	$candidate = $root . '/' . gmdate( 'Ymd-His' ) . '-' . strtolower( wp_generate_password( 20, false ) );
+	if ( ! $wp_filesystem->mkdir( $candidate, FS_CHMOD_DIR ) ) {
+		return new WP_Error( 'nb_mcp_backup_failed', 'Could not create the backup run directory.', array( 'status' => 500 ) );
+	}
+	$run_dir = $candidate;
+	// Safety net for backups kept after a failed restore (or an aborted request).
+	if ( ! wp_next_scheduled( 'nb_mcp_bridge_cleanup_backups' ) ) {
+		wp_schedule_event( time() + DAY_IN_SECONDS, 'daily', 'nb_mcp_bridge_cleanup_backups' );
+	}
+	return $run_dir;
+}
+
+/**
+ * Path relative to ABSPATH, for messages (never exposes more than the site layout).
+ */
+function nb_mcp_bridge_relative_path( $path ) {
+	$abs = wp_normalize_path( dirname( untrailingslashit( ABSPATH ) ) );
+	$p   = wp_normalize_path( $path );
+	return 0 === strpos( $p, $abs ) ? ltrim( substr( $p, strlen( $abs ) ), '/' ) : basename( $p );
+}
+
+/**
+ * Copies a file or directory to $dest (created as needed).
+ *
+ * @return true|WP_Error
+ */
+function nb_mcp_bridge_copy_path( $source, $dest ) {
+	global $wp_filesystem;
+
+	if ( $wp_filesystem->is_file( $source ) ) {
+		$wp_filesystem->mkdir( dirname( $dest ), FS_CHMOD_DIR );
+		return $wp_filesystem->copy( $source, $dest, true, FS_CHMOD_FILE )
+			? true
+			: new WP_Error( 'nb_mcp_copy_failed', 'Could not copy ' . nb_mcp_bridge_relative_path( $source ) );
+	}
+
+	if ( ! $wp_filesystem->is_dir( $dest ) && ! wp_mkdir_p( $dest ) ) {
+		return new WP_Error( 'nb_mcp_copy_failed', 'Could not create ' . nb_mcp_bridge_relative_path( $dest ) );
+	}
+	$result = copy_dir( $source, $dest );
+	return is_wp_error( $result ) ? $result : true;
+}
+
+/**
+ * Deletes entries under $target that do not exist under $reference
+ * (files an update added), recursively.
+ */
+function nb_mcp_bridge_remove_extra_entries( $target, $reference ) {
+	global $wp_filesystem;
+
+	$list = $wp_filesystem->dirlist( $target, true, false );
+	if ( ! is_array( $list ) ) {
+		return;
+	}
+	foreach ( $list as $name => $entry ) {
+		$t = trailingslashit( $target ) . $name;
+		$r = trailingslashit( $reference ) . $name;
+		if ( ! $wp_filesystem->exists( $r ) ) {
+			$wp_filesystem->delete( $t, true );
+		} elseif ( 'd' === $entry['type'] ) {
+			nb_mcp_bridge_remove_extra_entries( $t, $r );
+		}
+	}
+}
+
+/**
+ * Restores $target from $backup without ever leaving $target empty: first
+ * overwrite with the backed-up files, then drop files the update added.
+ *
+ * @return true|WP_Error
+ */
+function nb_mcp_bridge_restore_path( $backup, $target ) {
+	global $wp_filesystem;
+
+	if ( $wp_filesystem->is_file( $backup ) ) {
+		return nb_mcp_bridge_copy_path( $backup, $target );
+	}
+	if ( $wp_filesystem->exists( $target ) && ! $wp_filesystem->is_dir( $target ) ) {
+		$wp_filesystem->delete( $target );
+	}
+	$copied = nb_mcp_bridge_copy_path( $backup, $target );
+	if ( is_wp_error( $copied ) ) {
+		return $copied;
+	}
+	nb_mcp_bridge_remove_extra_entries( $target, $backup );
+	return true;
+}
+
+/**
+ * Where a plugin/theme lives on disk.
+ *
+ * @param string $type 'plugin' or 'theme'.
+ * @return string Absolute path (directory, or file for single-file plugins).
+ */
+function nb_mcp_bridge_item_path( $type, $id ) {
+	if ( 'plugin' === $type ) {
+		$dir = dirname( $id );
+		return '.' === $dir ? WP_PLUGIN_DIR . '/' . $id : WP_PLUGIN_DIR . '/' . $dir;
+	}
+	return trailingslashit( get_theme_root( $id ) ) . $id;
+}
+
+/**
+ * Like nb_mcp_bridge_item_path(), but only for items WordPress actually knows
+ * and whose resolved path lies strictly inside the plugins/theme root. Request
+ * input never reaches a filesystem operation without passing this.
+ *
+ * @return string|null
+ */
+function nb_mcp_bridge_safe_item_path( $type, $id ) {
+	if ( ! is_string( $id ) || '' === $id || false !== strpos( $id, '..' ) || false !== strpos( $id, '\\' ) ) {
+		return null;
+	}
+	if ( 'plugin' === $type ) {
+		$plugins = get_plugins();
+		if ( ! isset( $plugins[ $id ] ) || substr_count( $id, '/' ) > 1 ) {
+			return null;
+		}
+		$root = WP_PLUGIN_DIR;
+	} else {
+		if ( false !== strpos( $id, '/' ) || ! wp_get_theme( $id )->exists() ) {
+			return null;
+		}
+		$root = get_theme_root( $id );
+	}
+	$path      = nb_mcp_bridge_item_path( $type, $id );
+	$real      = realpath( $path );
+	$real_root = realpath( $root );
+	if ( false === $real || false === $real_root || 0 !== strpos( wp_normalize_path( $real ), trailingslashit( wp_normalize_path( $real_root ) ) ) ) {
+		return null;
+	}
+	$name = basename( $path );
+	return ( '' === $name || '.' === $name || '..' === $name ) ? null : $path;
+}
+
+/**
+ * Files that make up WordPress core, relative to ABSPATH (wp-config.php and
+ * wp-content are never touched).
+ *
+ * @return string[]
+ */
+function nb_mcp_bridge_core_entries() {
+	$entries = array( 'wp-admin', 'wp-includes' );
+	foreach ( (array) glob( ABSPATH . '*.php' ) as $file ) {
+		$name = basename( $file );
+		if ( 'wp-config.php' !== $name ) {
+			$entries[] = $name;
+		}
+	}
+	return $entries;
+}
+
+/**
+ * Error log to scan for new fatal errors, if one is readable.
+ *
+ * @return string|null
+ */
+function nb_mcp_bridge_error_log_path() {
+	$debug_log  = null;
+	$candidates = array();
+	if ( defined( 'WP_DEBUG_LOG' ) && is_string( WP_DEBUG_LOG ) && '' !== WP_DEBUG_LOG ) {
+		$debug_log = WP_DEBUG_LOG;
+	} elseif ( defined( 'WP_DEBUG_LOG' ) && WP_DEBUG_LOG ) {
+		$debug_log = WP_CONTENT_DIR . '/debug.log';
+	}
+	if ( $debug_log ) {
+		$candidates[] = $debug_log;
+	}
+	$ini = ini_get( 'error_log' );
+	if ( is_string( $ini ) && '' !== $ini && 'syslog' !== $ini ) {
+		$candidates[] = $ini;
+	}
+	foreach ( $candidates as $path ) {
+		if ( @is_file( $path ) && @is_readable( $path ) ) { // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+			return $path;
+		}
+	}
+	// WP creates debug.log on the first error, possibly during the update itself.
+	return ( $debug_log && @is_writable( dirname( $debug_log ) ) ) ? $debug_log : null; // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+}
+
+/**
+ * Current end of the error log, so only lines written after it are scanned.
+ *
+ * @return array{path: string|null, offset: int}
+ */
+function nb_mcp_bridge_error_log_mark() {
+	$path = nb_mcp_bridge_error_log_path();
+	clearstatcache();
+	return array(
+		'path'   => $path,
+		'offset' => ( $path && @is_file( $path ) ) ? (int) @filesize( $path ) : 0, // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+	);
+}
+
+/**
+ * First new fatal/parse error in the error log since $mark, if any.
+ *
+ * @return array{ok: bool, available: bool, error?: string}
+ */
+function nb_mcp_bridge_scan_error_log( $mark ) {
+	if ( empty( $mark['path'] ) ) {
+		return array( 'ok' => true, 'available' => false );
+	}
+	clearstatcache();
+	$size = @is_file( $mark['path'] ) ? (int) @filesize( $mark['path'] ) : 0; // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+	if ( $size <= $mark['offset'] ) {
+		return array( 'ok' => true, 'available' => true );
+	}
+	$handle = @fopen( $mark['path'], 'rb' ); // phpcs:ignore
+	if ( ! $handle ) {
+		return array( 'ok' => true, 'available' => false );
+	}
+	fseek( $handle, $mark['offset'] );
+	$chunk = (string) fread( $handle, min( $size - $mark['offset'], 262144 ) ); // phpcs:ignore
+	fclose( $handle ); // phpcs:ignore
+	if ( preg_match( '/^.*PHP (?:Fatal|Parse) error.*$/m', $chunk, $m ) ) {
+		return array( 'ok' => false, 'available' => true, 'error' => substr( trim( $m[0] ), 0, 300 ) );
+	}
+	return array( 'ok' => true, 'available' => true );
+}
+
+/**
+ * Fetches one URL of this site (loopback) and decides whether it is healthy.
+ *
+ * @param bool $strict When true, HTTP 4xx also counts as a failure (extra paths).
+ * @return array{ok: bool, status?: int, error?: string}
+ */
+function nb_mcp_bridge_probe( $url, $strict ) {
+	// Unique query arg so page/edge caches (Kinsta, Cloudflare) cannot answer.
+	$url      = add_query_arg( 'nb_mcp_health', strtolower( wp_generate_password( 12, false ) ), $url );
+	$response = wp_remote_get(
+		$url,
+		array(
+			'timeout'     => 30,
+			'redirection' => 5,
+			'sslverify'   => apply_filters( 'https_local_ssl_verify', false ),
+			'headers'     => array(
+				'Cache-Control' => 'no-cache',
+				'Pragma'        => 'no-cache',
+			),
+		)
+	);
+	if ( is_wp_error( $response ) ) {
+		return array( 'ok' => false, 'error' => $response->get_error_message() );
+	}
+	$status = (int) wp_remote_retrieve_response_code( $response );
+	$body   = (string) wp_remote_retrieve_body( $response );
+
+	$markers = array(
+		__( 'There has been a critical error on this website.' ), // phpcs:ignore WordPress.WP.I18n.MissingArgDomain -- core string, translated by core.
+		'There has been a critical error on this website',
+		'<b>Fatal error</b>:',
+		'<b>Parse error</b>:',
+		'PHP Fatal error',
+	);
+	foreach ( $markers as $marker ) {
+		if ( '' !== $marker && false !== strpos( $body, $marker ) ) {
+			return array( 'ok' => false, 'status' => $status, 'error' => 'Page shows a PHP fatal error.' );
+		}
+	}
+	if ( $status >= 500 || ( $strict && $status >= 400 ) || 0 === $status ) {
+		return array( 'ok' => false, 'status' => $status, 'error' => 'HTTP ' . $status );
+	}
+	return array( 'ok' => true, 'status' => $status );
+}
+
+/**
+ * Runs all health checks: homepage, login page, extra paths and (after an
+ * update) the error log. Checks that already failed in $baseline are reported
+ * but do not count, so a pre-existing 404 never triggers a rollback.
+ *
+ * @param string[]   $paths    Extra site-relative paths.
+ * @param array|null $baseline Result of the pre-update check, or null for the baseline itself.
+ * @param array|null $log_mark From nb_mcp_bridge_error_log_mark(), taken before the update.
+ * @return array{ok: bool, checks: array<int, array>}
+ */
+function nb_mcp_bridge_health_check( $paths, $baseline = null, $log_mark = null ) {
+	$targets = array(
+		array( 'target' => 'home', 'url' => home_url( '/' ), 'strict' => false ),
+		array( 'target' => 'login', 'url' => wp_login_url(), 'strict' => false ),
+	);
+	foreach ( (array) $paths as $path ) {
+		$targets[] = array( 'target' => $path, 'url' => home_url( $path ), 'strict' => true );
+	}
+
+	$failed_before = array();
+	if ( $baseline ) {
+		foreach ( $baseline['checks'] as $check ) {
+			if ( ! $check['ok'] ) {
+				$failed_before[ $check['target'] ] = true;
+			}
+		}
+	}
+
+	$checks = array();
+	$ok     = true;
+	foreach ( $targets as $t ) {
+		$result = array_merge( array( 'target' => $t['target'] ), nb_mcp_bridge_probe( $t['url'], $t['strict'] ) );
+		if ( ! $result['ok'] && isset( $failed_before[ $t['target'] ] ) ) {
+			$result['ignored'] = true; // Already failing before the update.
+		} elseif ( ! $result['ok'] ) {
+			$ok = false;
+		}
+		$checks[] = $result;
+	}
+
+	if ( $log_mark ) {
+		$log      = nb_mcp_bridge_scan_error_log( $log_mark );
+		$checks[] = array_merge( array( 'target' => 'error_log' ), $log );
+		if ( ! $log['ok'] ) {
+			$ok = false;
+		}
+	}
+
+	return array( 'ok' => $ok, 'checks' => $checks );
+}
+
+/**
+ * Pre-update health check. The homepage must work before we update anything,
+ * otherwise the post-update check cannot tell what the update broke.
+ *
+ * @return array|WP_Error Baseline check result.
+ */
+function nb_mcp_bridge_safe_baseline( $paths ) {
+	$baseline = nb_mcp_bridge_health_check( $paths );
+	foreach ( $baseline['checks'] as $check ) {
+		if ( 'home' === $check['target'] && ! $check['ok'] ) {
+			return new WP_Error(
+				'nb_mcp_site_unhealthy',
+				'The homepage already fails before updating (' . ( isset( $check['error'] ) ? $check['error'] : 'unknown' ) . '); no updates were run.',
+				array( 'status' => 409, 'health' => $baseline )
+			);
+		}
+	}
+	return $baseline;
+}
+
+/**
+ * Safe update of one plugin or theme: backup → update → check → restore.
+ *
+ * @param string   $type     'plugin' or 'theme'.
+ * @param string   $id       Plugin file or theme stylesheet.
+ * @param array    $baseline Pre-update health check.
+ * @param string[] $paths    Extra health check paths.
+ * @param callable $run      Runs the regular upgrade for [$id] and returns its result row.
+ * @param callable $after_restore Called after files are restored (reactivation, caches).
+ * @return array Result row (regular fields + backup/health/rolled_back).
+ */
+function nb_mcp_bridge_safe_update_item( $type, $id, $baseline, $paths, $run, $after_restore ) {
+	global $wp_filesystem;
+
+	$source = nb_mcp_bridge_safe_item_path( $type, $id );
+	if ( null === $source ) {
+		// Unknown or invalid item: let the regular runner report it; never back up or restore.
+		return array_merge( call_user_func( $run ), array( 'backup' => 'none', 'rolled_back' => false ) );
+	}
+
+	$run_dir = nb_mcp_bridge_backup_run_dir();
+	if ( is_wp_error( $run_dir ) ) {
+		return array( $type => $id, 'success' => false, 'from' => '', 'to' => '', 'error' => 'Backup failed: ' . $run_dir->get_error_message(), 'backup' => 'failed', 'rolled_back' => false );
+	}
+	$backup = $run_dir . '/' . $type . 's/' . basename( $source );
+	$copied = nb_mcp_bridge_copy_path( $source, $backup );
+	if ( is_wp_error( $copied ) ) {
+		$wp_filesystem->delete( $backup, true );
+		return array( $type => $id, 'success' => false, 'from' => '', 'to' => '', 'error' => 'Backup failed, update not run: ' . $copied->get_error_message(), 'backup' => 'failed', 'rolled_back' => false );
+	}
+
+	$log_mark = nb_mcp_bridge_error_log_mark();
+	$row      = call_user_func( $run );
+
+	if ( ! empty( $row['no_update'] ) ) {
+		$wp_filesystem->delete( $backup, true );
+		return array_merge( $row, array( 'backup' => 'none', 'rolled_back' => false ) );
+	}
+
+	// A failed upgrade may have removed the old copy already (clear_destination).
+	$missing = ! $wp_filesystem->exists( $source );
+	$health  = $missing ? array( 'ok' => false, 'checks' => array() ) : nb_mcp_bridge_health_check( $paths, $baseline, $log_mark );
+
+	if ( $health['ok'] ) {
+		$wp_filesystem->delete( $backup, true );
+		return array_merge( $row, array( 'backup' => 'created', 'health' => $health, 'rolled_back' => false ) );
+	}
+
+	$restored = nb_mcp_bridge_restore_path( $backup, $source );
+	call_user_func( $after_restore );
+	$after = nb_mcp_bridge_health_check( $paths, $baseline );
+
+	$result = array_merge(
+		$row,
+		array(
+			'success'     => false,
+			'to'          => $row['from'],
+			'error'       => $missing ? 'Update failed and removed the old files; restored from backup.' : 'Site unhealthy after update; restored from backup.',
+			'backup'      => 'created',
+			'health'      => $health,
+			'rolled_back' => ! is_wp_error( $restored ),
+		)
+	);
+	if ( is_wp_error( $restored ) || ! $after['ok'] ) {
+		$result['rollback_error'] = is_wp_error( $restored )
+			? 'Restore failed: ' . $restored->get_error_message()
+			: 'Site still unhealthy after restoring the backup.';
+		$result['backup_path']    = nb_mcp_bridge_relative_path( $backup );
+		$result['health_after_restore'] = $after;
+	} else {
+		$wp_filesystem->delete( $backup, true );
+	}
+	return $result;
+}
+
+/**
+ * True when $dir contains at least one file, at any depth.
+ */
+function nb_mcp_bridge_dir_has_files( $dir ) {
+	global $wp_filesystem;
+	foreach ( (array) $wp_filesystem->dirlist( $dir, true, false ) as $name => $entry ) {
+		if ( 'f' === $entry['type'] || nb_mcp_bridge_dir_has_files( trailingslashit( $dir ) . $name ) ) {
+			return true;
+		}
+	}
+	return false;
+}
+
+/**
+ * Removes this request's run directory when no backups were kept.
+ */
+function nb_mcp_bridge_finish_backup_run() {
+	global $wp_filesystem;
+	$run_dir = nb_mcp_bridge_backup_run_dir( true );
+	if ( $run_dir && $wp_filesystem->is_dir( $run_dir ) && ! nb_mcp_bridge_dir_has_files( $run_dir ) ) {
+		$wp_filesystem->delete( $run_dir, true );
+	}
+}
+
+/**
+ * Daily clean-up of backups older than a day (e.g. kept after a failed restore).
+ */
+function nb_mcp_bridge_cleanup_old_backups() {
+	$root = nb_mcp_bridge_backup_root();
+	if ( ! is_dir( $root ) ) {
+		return;
+	}
+	require_once ABSPATH . 'wp-admin/includes/file.php';
+	if ( ! WP_Filesystem() ) {
+		return;
+	}
+	global $wp_filesystem;
+	foreach ( (array) glob( $root . '/*', GLOB_ONLYDIR ) as $dir ) {
+		if ( filemtime( $dir ) < time() - DAY_IN_SECONDS ) {
+			$wp_filesystem->delete( $dir, true );
+		}
+	}
+}
+add_action( 'nb_mcp_bridge_cleanup_backups', 'nb_mcp_bridge_cleanup_old_backups' );
+

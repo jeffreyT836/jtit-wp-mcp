@@ -81,11 +81,12 @@ function formValues(body: Record<string, unknown>): SiteFormValues {
     readOnly: body.readOnly === 'on',
     allowHttp: body.allowHttp === 'on',
     bridge: body.bridge === 'on',
+    healthPaths: typeof body.healthPaths === 'string' ? body.healthPaths.trim() : '',
   };
 }
 
 function toFormValues(site: SiteConfig): SiteFormValues {
-  return { ...site, tags: site.tags.join(', ') };
+  return { ...site, tags: site.tags.join(', '), healthPaths: site.healthPaths.join('\n') };
 }
 
 export function siteRoutes(ctx: RouteContext): Router {
@@ -131,6 +132,7 @@ export function siteRoutes(ctx: RouteContext): Router {
     const parsed = siteConfigSchema.safeParse({
       ...values,
       tags: values.tags.split(',').map((t) => t.trim()).filter(Boolean),
+      healthPaths: values.healthPaths.split(/\r?\n/).map((p) => p.trim()).filter(Boolean),
     });
     if (!parsed.success) {
       return rerender(parsed.error.issues.map((i) => `${i.path.join('.') || 'site'}: ${i.message}`).join('; '));

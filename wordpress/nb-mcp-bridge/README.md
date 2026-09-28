@@ -25,6 +25,50 @@ expose. Requires WordPress 6.0+ and PHP 7.4+.
    `wp_is_application_passwords_available()`); every other environment must
    be served over HTTPS or Application Password auth will be rejected.
 
+## Safe updates (1.1.0+)
+
+`POST /updates/plugins`, `/updates/themes` and `/updates/core` accept two
+optional body fields:
+
+| Field | Meaning |
+|---|---|
+| `safe: true` | Backup → update → health check → automatic restore, per item, inside the same request |
+| `health_paths: ["/shop"]` | Extra site-relative pages to check (max 10, must start with a single `/`) |
+
+How it works:
+
+1. **Baseline**: the homepage, `wp-login.php` and the extra paths are fetched
+   (loopback, with a cache-busting query arg). If the homepage already fails,
+   nothing is updated (`409 nb_mcp_site_unhealthy`). Checks that already
+   failed are reported as `ignored` afterwards.
+2. **Backup** of the plugin/theme directory (core minor: `wp-admin`,
+   `wp-includes` and root PHP files except `wp-config.php`). Stored outside the
+   web root when possible (`<parent of ABSPATH>/nb-mcp-backups`), otherwise in
+   `wp-content/nb-mcp-backups/<random>`; override with the
+   `NB_MCP_BRIDGE_BACKUP_DIR` constant. Only items WordPress knows, whose path
+   resolves inside the plugins/theme root, are ever copied.
+3. **Update**, then the **health check** again, plus new `PHP Fatal error` /
+   `Parse error` lines in the error log (`WP_DEBUG_LOG` or `error_log`).
+4. **Failure** → the old files are put back (overwrite first, then remove files
+   the update added, so the site is never left without code), the plugin is
+   re-activated if it was active, and the site is checked once more.
+   Success → the backup is deleted.
+
+Why in one request: when an update makes the site fatal, the REST API is
+broken too, so a later "undo" request could never arrive. The request that did
+the update still runs the old code from memory.
+
+Not covered: the **database** (a core update's DB upgrade is not reverted; the
+response says so) and **major core updates** (checked and reported, never
+restored automatically). Result rows gain `backup`, `health`, `rolled_back`,
+and on a failed restore `rollback_error` + `backup_path` (kept for manual
+recovery; a daily cron removes backups older than a day).
+
+`GET /status` lists `features: ["safe_updates"]`; clients must check it,
+because older bridges silently ignore `safe`.
+
+End-to-end test against a real WordPress in Docker: `tests/wordpress-e2e/run.sh`.
+
 ## Caching (Kinsta, Cloudflare, other CDNs)
 
 Since 1.0.7 every `nb-mcp/v1` response (including errors) is sent with

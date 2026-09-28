@@ -62,6 +62,8 @@ export interface SiteFormValues {
   readOnly: boolean;
   allowHttp: boolean;
   bridge: boolean;
+  /** One site-relative path per line. */
+  healthPaths: string;
 }
 
 export const emptySiteForm: SiteFormValues = {
@@ -73,6 +75,7 @@ export const emptySiteForm: SiteFormValues = {
   readOnly: false,
   allowHttp: false,
   bridge: true,
+  healthPaths: '',
 };
 
 export function siteFormPage(opts: {
@@ -103,6 +106,8 @@ export function siteFormPage(opts: {
           placeholder="${mode === 'edit' ? (hasPassword ? 'Laat leeg om ongewijzigd te laten' : 'Nog niet ingesteld') : 'xxxx xxxx xxxx xxxx xxxx xxxx'}">
         <small>Wordt versleuteld opgeslagen en nooit meer getoond.</small></label>
     </div>
+    <label>Extra controle-pagina's <small>(één pad per regel, bijv. /winkel — gecontroleerd na veilige updates, naast homepage en inlogpagina)</small>
+      <textarea name="healthPaths" rows="3" placeholder="/winkel">${values.healthPaths}</textarea></label>
     <fieldset class="checks">
       <label><input type="checkbox" name="readOnly" ${values.readOnly ? 'checked' : ''}> Alleen lezen (geen wijzigingen via MCP)</label>
       <label><input type="checkbox" name="bridge" ${values.bridge ? 'checked' : ''}> nb-mcp-bridge geïnstalleerd</label>

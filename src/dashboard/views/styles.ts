@@ -43,6 +43,10 @@ label.confirm { display: inline; margin: 0; font-weight: 400; }
 .actions { display: flex; flex-wrap: wrap; gap: .75rem; align-items: center; margin-top: 1rem; }
 .flash { padding: .6rem .9rem; border-radius: 6px; }
 .flash.ok { background: var(--ok-bg); color: var(--ok); } .flash.error { background: var(--err-bg); color: var(--err); }
+.flash.warn { background: var(--warn-bg); color: var(--warn); }
+fieldset.safe { border: 1px solid var(--border); border-radius: 8px; padding: .75rem 1rem; margin: 1.25rem 0 0; }
+fieldset.safe small { display: block; margin-top: .35rem; }
+textarea { display: block; width: 100%; margin-top: .3rem; padding: .55rem .7rem; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); font: inherit; min-height: 5rem; }
 .hint { color: var(--muted); font-size: .9rem; }
 .table-wrap { overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; }

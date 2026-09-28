@@ -108,8 +108,15 @@ export function updatesSection(opts: { csrf: string; site: StoredSite; snapshot?
           ${translations > 0
             ? html`<h3>Vertalingen</h3><label class="plain"><input type="checkbox" name="translations"> ${translations} vertaling(en) bijwerken</label>`
             : null}
+          <fieldset class="safe">
+            <label class="plain"><input type="checkbox" name="safe" checked> <strong>Veilig updaten</strong>: backup, controle en automatisch terugzetten</label>
+            <small>Per onderdeel maakt de server eerst een bestandsbackup, voert de update uit en controleert
+            de homepage, de inlogpagina${site.healthPaths.length ? html`, ${site.healthPaths.join(', ')}` : null} en het PHP-errorlog.
+            Gaat er iets mis, dan wordt het onderdeel direct teruggezet; anders wordt de backup verwijderd.
+            WordPress major-updates worden alleen gecontroleerd, niet teruggezet. De database wordt nooit teruggezet.</small>
+          </fieldset>
           <div class="run">
-            <label class="confirm"><input type="checkbox" name="confirm" required> Ik heb een recente backup en wil de geselecteerde updates nu uitvoeren</label>
+            <label class="confirm"><input type="checkbox" name="confirm" required> Ik wil de geselecteerde updates nu uitvoeren</label>
             <button type="submit" data-busy="Bezig met bijwerken… (dit kan enkele minuten duren)">Geselecteerde bijwerken</button>
           </div>
         </form>`}
@@ -121,6 +128,8 @@ const STATUS_LABEL: Record<UpdateItemResult['status'], SafeHtml> = {
   up_to_date: html`<span class="badge muted">was al actueel</span>`,
   skipped: html`<span class="badge warn">overgeslagen</span>`,
   failed: html`<span class="badge error">mislukt</span>`,
+  rolled_back: html`<span class="badge warn">teruggezet</span>`,
+  rollback_failed: html`<span class="badge error">terugzetten mislukt — handmatig ingrijpen</span>`,
 };
 
 const KIND_LABEL: Record<UpdateItemResult['kind'], string> = {
@@ -129,13 +138,20 @@ const KIND_LABEL: Record<UpdateItemResult['kind'], string> = {
 
 export function updateResultPage(opts: { site: StoredSite; results: UpdateItemResult[]; names: Map<string, string> }): SafeHtml {
   const { site, results, names } = opts;
-  const failed = results.filter((r) => r.status === 'failed').length;
+  const failed = results.filter((r) => r.status === 'failed' || r.status === 'rollback_failed').length;
+  const rolledBack = results.filter((r) => r.status === 'rolled_back').length;
+  const critical = results.some((r) => r.status === 'rollback_failed');
   return html`
 <section class="card">
   <h1>Updates uitgevoerd: ${site.name}</h1>
-  <p class="flash ${failed > 0 ? 'error' : 'ok'}">${failed > 0
+  ${critical
+    ? html`<p class="flash error" role="alert"><strong>Let op:</strong> bij minstens één onderdeel is het terugzetten mislukt. Controleer de site nu; de backup is bewaard (zie hieronder).</p>`
+    : null}
+  <p class="flash ${failed > 0 ? 'error' : rolledBack > 0 ? 'warn' : 'ok'}">${failed > 0
     ? `${failed} van ${results.length} onderdelen zijn mislukt.`
-    : `Alle ${results.length} onderdelen zijn verwerkt.`}</p>
+    : rolledBack > 0
+      ? `${rolledBack} van ${results.length} onderdelen gaven fouten en zijn automatisch teruggezet; de rest is verwerkt.`
+      : `Alle ${results.length} onderdelen zijn verwerkt.`}</p>
   <div class="table-wrap"><table>
     <thead><tr><th>Soort</th><th>Onderdeel</th><th>Versie</th><th>Resultaat</th></tr></thead>
     <tbody>${results.map(

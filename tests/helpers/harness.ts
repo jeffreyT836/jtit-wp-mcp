@@ -129,6 +129,7 @@ export function makeSite(overrides: Partial<ResolvedSite> & { id: string }): Res
     readOnly: overrides.readOnly ?? false,
     allowHttp: overrides.allowHttp ?? false,
     bridge: overrides.bridge ?? true,
+    healthPaths: overrides.healthPaths ?? [],
     password: overrides.password ?? 'app password 1234',
     available: overrides.available ?? true,
     unavailableReason: overrides.unavailableReason ?? null,

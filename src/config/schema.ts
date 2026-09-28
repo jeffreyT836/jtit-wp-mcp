@@ -10,6 +10,14 @@ export const passwordEnvSchema = z
   .string()
   .regex(/^[A-Z][A-Z0-9_]+$/, 'passwordEnv must match ^[A-Z][A-Z0-9_]+$');
 
+/** Site-relative page checked after safe updates, e.g. "/winkel". Never a full URL (no SSRF). */
+export const healthPathSchema = z
+  .string()
+  .max(200)
+  .regex(/^\/(?!\/)[^\s\\]*$/, 'controle-pagina moet een pad zijn dat met één "/" begint, zonder spaties');
+
+export const MAX_HEALTH_PATHS = 10;
+
 export const siteConfigSchema = z.object({
   id: siteIdSchema,
   name: z.string().min(1),
@@ -19,6 +27,7 @@ export const siteConfigSchema = z.object({
   readOnly: z.boolean().default(false),
   allowHttp: z.boolean().default(false),
   bridge: z.boolean().default(true),
+  healthPaths: z.array(healthPathSchema).max(MAX_HEALTH_PATHS).default([]),
 });
 
 export type SiteConfigInput = z.input<typeof siteConfigSchema>;
