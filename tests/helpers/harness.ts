@@ -24,7 +24,8 @@ export interface Harness {
 }
 
 const defaultEnv: EnvConfig = {
-  SITES_CONFIG: undefined,
+  SITES_DB: undefined,
+  SITES_ENCRYPTION_KEY: undefined,
   MCP_TRANSPORT: 'stdio',
   MCP_HTTP_PORT: 3000,
   MCP_HTTP_HOST: '0.0.0.0',
@@ -124,7 +125,6 @@ export function makeSite(overrides: Partial<ResolvedSite> & { id: string }): Res
     name: overrides.name ?? overrides.id,
     url: overrides.url ?? `https://${overrides.id}.example.com`,
     username: overrides.username ?? 'mcp-bot',
-    passwordEnv: overrides.passwordEnv ?? `WP_${overrides.id.toUpperCase().replace(/-/g, '_')}_APP_PASSWORD`,
     tags: overrides.tags ?? [],
     readOnly: overrides.readOnly ?? false,
     allowHttp: overrides.allowHttp ?? false,

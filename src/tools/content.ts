@@ -81,7 +81,7 @@ export function register(server: McpServer, ctx: ToolContext): void {
         'pick posts or pages, `status` to filter (default "any", which includes drafts/pending/etc via ' +
         'context=edit), and `search` for a text query. Read-only.',
       inputSchema: {
-        site: z.string().describe('Site id from sites.json'),
+        site: z.string().describe('Site id (see list_sites)'),
         type: z.enum(['post', 'page']).optional().describe('Content type to list; defaults to "post".'),
         status: z
           .enum(['publish', 'draft', 'pending', 'private', 'future', 'any'])
@@ -120,7 +120,7 @@ export function register(server: McpServer, ctx: ToolContext): void {
         'Lists comments on a site as {id, post, author_name, date, status, content} where content is an ' +
         'HTML-stripped excerpt (max 300 chars). Defaults to status "hold" (awaiting moderation). Read-only.',
       inputSchema: {
-        site: z.string().describe('Site id from sites.json'),
+        site: z.string().describe('Site id (see list_sites)'),
         status: z
           .enum(['hold', 'approved', 'spam', 'trash', 'any'])
           .optional()
@@ -154,7 +154,7 @@ export function register(server: McpServer, ctx: ToolContext): void {
       'without it, returns a dry-run preview and changes nothing. Moving to "trash" issues a DELETE (without ' +
       'force, so it is recoverable from the trash); other statuses issue a POST {status}.',
     inputSchema: {
-      site: z.string().describe('Site id from sites.json'),
+      site: z.string().describe('Site id (see list_sites)'),
       id: z.number().int().positive().describe('Comment id.'),
       status: z.enum(['approved', 'hold', 'spam', 'trash']).describe('Target moderation status.'),
       confirm: z.boolean().optional().describe('Must be true to actually apply the change.'),

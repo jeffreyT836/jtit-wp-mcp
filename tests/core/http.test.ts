@@ -28,7 +28,8 @@ function buildCtx(overrides: Partial<EnvConfig>, fetchImpl?: typeof fetch): Tool
   const registry = new SiteRegistry([site], { fetch: fetchImpl });
   const audit = new AuditLogger({ stderrWrite: () => {} });
   const env: EnvConfig = {
-    SITES_CONFIG: undefined,
+    SITES_DB: undefined,
+    SITES_ENCRYPTION_KEY: undefined,
     MCP_TRANSPORT: 'http',
     MCP_HTTP_PORT: 0,
     MCP_HTTP_HOST: '127.0.0.1',

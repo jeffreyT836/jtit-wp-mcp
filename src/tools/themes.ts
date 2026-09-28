@@ -98,7 +98,7 @@ export function register(server: McpServer, ctx: ToolContext): void {
       description:
         'Lists installed themes on a site: stylesheet slug, name, version, activation status, author and requirements. Use to see what is installed/active before updating a theme. Optional status ("active"|"inactive") and search filters. Read-only.',
       inputSchema: {
-        site: z.string().describe('Site id from sites.json'),
+        site: z.string().describe('Site id (see list_sites)'),
         status: z.enum(['active', 'inactive']).optional().describe('Only themes with this activation status'),
         search: z.string().optional().describe('Filter by a search term against the theme name'),
       },

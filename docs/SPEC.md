@@ -7,8 +7,16 @@ performing updates, roles, status).
 
 ## 1. Configuration & secrets
 
-- `config/sites.json` (NOT secret, mounted read-only at `/app/config/sites.json`,
-  path overridable with `SITES_CONFIG`). Validated with zod at startup.
+- Sites live in a SQLite store (`SITES_DB`, default `/app/data/sites.db` in the container,
+  `./data/sites.db` locally; see `src/store/site-store.ts`), managed via `node dist/cli.js
+  sites list|add|remove|import` (see `src/cli.ts`). Application Passwords are stored
+  AES-256-GCM encrypted (site id as AAD, see `src/store/crypto.ts`) under
+  `SITES_ENCRYPTION_KEY` (base64 of 32 random bytes, required). The MCP server reloads sites
+  automatically when the store's version counter changes — no restart needed.
+- The legacy `config/sites.json` format (below) is no longer read at runtime. It survives only
+  as the input format for the one-off `sites import` migration (`loadLegacySitesFile` in
+  `src/config/loader.ts`), which resolves each site's password the old way — from
+  `env[passwordEnv]` or `env[passwordEnv + "_FILE"]` — and writes it encrypted into the store.
 
 ```json
 {
@@ -28,19 +36,23 @@ performing updates, roles, status).
 }
 ```
 
-- Secret resolution for each site: `process.env[passwordEnv]`, else read file at
+- Secret resolution during `sites import` only: `process.env[passwordEnv]`, else read file at
   `process.env[passwordEnv + "_FILE"]` (Docker secrets). Trim whitespace; spaces inside
-  application passwords are allowed (WP accepts them).
+  application passwords are allowed (WP accepts them). At runtime, secrets come from the
+  encrypted store instead (see `SiteStore.load()` in `src/store/site-store.ts`).
 - Missing secret → site is loaded but marked `available: false` with reason; a warning goes
-  to **stderr** (never stdout — stdout is the stdio MCP channel). Invalid sites.json → exit 1.
-- Passwords are NEVER included in tool output, errors, or logs. Error messages from fetch
-  must be sanitized (no Authorization header, no credentials in URLs).
+  to **stderr** (never stdout — stdout is the stdio MCP channel). Invalid legacy sites.json
+  (during import) → the CLI exits non-zero without writing partial state.
+- Passwords are NEVER included in tool output, errors, logs, or CLI arguments (the `sites add`
+  command reads the password from a hidden terminal prompt or piped stdin). Error messages
+  from fetch must be sanitized (no Authorization header, no credentials in URLs).
 
 Global env vars:
 
 | Var | Default | Meaning |
 |---|---|---|
-| `SITES_CONFIG` | `/app/config/sites.json` (fallback `./config/sites.json` when not present) | config path |
+| `SITES_DB` | `/app/data/sites.db` (container) / `./data/sites.db` (local) | path to the SQLite site store |
+| `SITES_ENCRYPTION_KEY` | — | required; base64 of 32 random bytes, encrypts stored Application Passwords |
 | `MCP_TRANSPORT` | `stdio` | `stdio` or `http` |
 | `MCP_HTTP_PORT` | `3000` | http mode port |
 | `MCP_HTTP_HOST` | `0.0.0.0` | http bind |
@@ -54,7 +66,7 @@ Global env vars:
 
 ## 2. Safety model
 
-1. **Allowlist**: the server only ever talks to URLs in sites.json (no user-supplied URLs → no SSRF).
+1. **Allowlist**: the server only ever talks to URLs in the site store (no user-supplied URLs → no SSRF).
 2. **Write tools require `confirm: true`.** Without it they return a *dry-run preview*
    `{ dryRun: true, wouldDo: ... }` and change nothing.
 3. **Per-site `readOnly`** → write tools refuse for that site with a clear error.
@@ -73,8 +85,11 @@ Global env vars:
 src/index.ts            entry: load config, build server, pick transport
 src/server.ts           createServer(ctx): McpServer; calls registerAllTools
 src/http.ts             Streamable HTTP transport + bearer auth
-src/config/schema.ts    zod schemas + types
-src/config/loader.ts    loadConfig(path, env) → AppConfig (sites with resolved secrets)
+src/config/schema.ts    zod schemas + types (site config, legacy sites.json, env)
+src/config/loader.ts    resolveSite() + loadLegacySitesFile() (used by `sites import` only)
+src/store/site-store.ts SiteStore: SQLite-backed sites (list/load/upsert/remove), version counter
+src/store/crypto.ts     AES-256-GCM encrypt/decrypt of Application Passwords
+src/cli.ts              CLI: sites list/add/remove/import
 src/wp/client.ts        WpClient: request<T>(path, {method, query, body, timeoutMs}) with
                         Basic auth, JSON, timeout (AbortSignal), error mapping, pagination helper
                         getAll<T>(path, query) using X-WP-TotalPages (cap 20 pages)

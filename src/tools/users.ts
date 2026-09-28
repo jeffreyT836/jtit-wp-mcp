@@ -105,7 +105,7 @@ export function register(server: McpServer, ctx: ToolContext): void {
         'Lists WordPress users on a site as {id, username, name, email, roles, registered_date}. ' +
         'Use to find a user before calling get_user, update_user_roles, or delete_user. Read-only.',
       inputSchema: {
-        site: z.string().describe('Site id from sites.json'),
+        site: z.string().describe('Site id (see list_sites)'),
         roles: z.array(z.string()).optional().describe('Only include users that have any of these roles.'),
         search: z.string().optional().describe('Search term matched against username, name, and email.'),
       },
@@ -130,7 +130,7 @@ export function register(server: McpServer, ctx: ToolContext): void {
     {
       title: 'Get user',
       description: 'Fetches one WordPress user by id as {id, username, name, email, roles, registered_date}.',
-      inputSchema: { site: z.string().describe('Site id from sites.json'), id: userIdSchema },
+      inputSchema: { site: z.string().describe('Site id (see list_sites)'), id: userIdSchema },
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
     async ({ site: siteId, id }) => {
@@ -152,7 +152,7 @@ export function register(server: McpServer, ctx: ToolContext): void {
         'Lists the WordPress roles defined on a site (slug, name, user_count, and optionally capabilities), ' +
         'via the nb-mcp-bridge mu-plugin. Read-only.',
       inputSchema: {
-        site: z.string().describe('Site id from sites.json'),
+        site: z.string().describe('Site id (see list_sites)'),
         include_caps: z.boolean().optional().describe('Include each role’s capabilities map.'),
       },
       annotations: { readOnlyHint: true, openWorldHint: true },
@@ -179,7 +179,7 @@ export function register(server: McpServer, ctx: ToolContext): void {
       'password is generated; it is never returned by this tool (nor shown in the dry-run preview) — ' +
       'send the new user a password-reset email instead.',
     inputSchema: {
-      site: z.string().describe('Site id from sites.json'),
+      site: z.string().describe('Site id (see list_sites)'),
       username: usernameSchema.describe('WP-safe login username.'),
       email: z.email().describe('User email address.'),
       role: z.string().optional().describe('WordPress role slug; defaults to "subscriber".'),
@@ -236,7 +236,7 @@ export function register(server: McpServer, ctx: ToolContext): void {
       'showing current -> requested roles and changes nothing. Refuses to remove the administrator role ' +
       'from the account the MCP server itself authenticates as, to avoid locking the server out.',
     inputSchema: {
-      site: z.string().describe('Site id from sites.json'),
+      site: z.string().describe('Site id (see list_sites)'),
       id: userIdSchema,
       roles: z.array(z.string()).min(1).describe('The full new set of role slugs for this user.'),
       confirm: z.boolean().optional().describe('Must be true to actually apply the role change.'),
@@ -271,7 +271,7 @@ export function register(server: McpServer, ctx: ToolContext): void {
       '`reassign` is required and must differ from `id`. Refuses to delete the account the MCP server ' +
       'itself authenticates as. Destructive and irreversible.',
     inputSchema: {
-      site: z.string().describe('Site id from sites.json'),
+      site: z.string().describe('Site id (see list_sites)'),
       id: userIdSchema.describe('User id to delete.'),
       reassign: z.number().int().positive().describe('User id to reassign this user’s content to; must differ from id.'),
       confirm: z.boolean().optional().describe('Must be true to actually delete the user.'),
@@ -308,7 +308,7 @@ export function register(server: McpServer, ctx: ToolContext): void {
       description:
         'Lists a user’s application passwords as {uuid, name, created, last_used, last_ip}. ' +
         'Never includes the password values themselves (WP never returns them after creation). Read-only.',
-      inputSchema: { site: z.string().describe('Site id from sites.json'), id: userIdSchema },
+      inputSchema: { site: z.string().describe('Site id (see list_sites)'), id: userIdSchema },
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
     async ({ site: siteId, id }) => {
@@ -340,7 +340,7 @@ export function register(server: McpServer, ctx: ToolContext): void {
       'returns a dry-run preview and changes nothing. Once revoked, anything authenticating with it stops ' +
       'working immediately — destructive and irreversible.',
     inputSchema: {
-      site: z.string().describe('Site id from sites.json'),
+      site: z.string().describe('Site id (see list_sites)'),
       id: userIdSchema.describe('Owning user id.'),
       uuid: uuidSchema.describe('The application password’s uuid, from list_application_passwords.'),
       confirm: z.boolean().optional().describe('Must be true to actually revoke it.'),

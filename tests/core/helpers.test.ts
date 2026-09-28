@@ -22,7 +22,8 @@ import { SiteRegistry } from '../../src/wp/registry.js';
 import { createMockFetch, jsonResponse, makeSite } from '../helpers/harness.js';
 
 const testEnv: EnvConfig = {
-  SITES_CONFIG: undefined,
+  SITES_DB: undefined,
+  SITES_ENCRYPTION_KEY: undefined,
   MCP_TRANSPORT: 'stdio',
   MCP_HTTP_PORT: 3000,
   MCP_HTTP_HOST: '0.0.0.0',

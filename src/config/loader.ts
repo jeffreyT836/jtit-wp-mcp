@@ -1,27 +1,13 @@
-import { existsSync, readFileSync } from 'node:fs';
-import type { AppConfig, ResolvedSite, SiteConfig } from './schema.js';
+import { readFileSync } from 'node:fs';
+import type { ResolvedSite, SiteConfig } from './schema.js';
 import { sitesFileSchema } from './schema.js';
 
-/** Thrown when `sites.json` is missing, unreadable, or fails schema validation. */
+/** Thrown when a legacy `sites.json` is missing, unreadable, or fails schema validation. */
 export class ConfigError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'ConfigError';
   }
-}
-
-const DEFAULT_CONTAINER_PATH = '/app/config/sites.json';
-const DEFAULT_LOCAL_PATH = './config/sites.json';
-
-/** Resolves the sites.json path per SPEC.md §1's `SITES_CONFIG` fallback rule. */
-export function resolveSitesConfigPath(env: NodeJS.ProcessEnv = process.env): string {
-  if (env.SITES_CONFIG) {
-    return env.SITES_CONFIG;
-  }
-  if (existsSync(DEFAULT_CONTAINER_PATH)) {
-    return DEFAULT_CONTAINER_PATH;
-  }
-  return DEFAULT_LOCAL_PATH;
 }
 
 function readSecretFile(filePath: string): string | null {
@@ -63,9 +49,16 @@ export function resolveSecret(
   };
 }
 
-function resolveSite(site: SiteConfig, env: NodeJS.ProcessEnv): ResolvedSite {
-  const { password, reason: secretReason } = resolveSecret(site.passwordEnv, env);
-
+/**
+ * Combines a site with its (possibly missing) application password into a
+ * {@link ResolvedSite}, marking it unavailable when the secret is missing or the URL scheme
+ * is disallowed. Shared by the SQLite site store and the legacy sites.json importer.
+ */
+export function resolveSite(
+  site: SiteConfig,
+  password: string | null,
+  secretReason: string | null = password === null ? 'no application password stored' : null,
+): ResolvedSite {
   let unavailableReason = secretReason;
   if (!site.url.startsWith('https://') && !site.allowHttp) {
     unavailableReason = 'site url is not https:// and allowHttp is not enabled';
@@ -79,12 +72,22 @@ function resolveSite(site: SiteConfig, env: NodeJS.ProcessEnv): ResolvedSite {
   };
 }
 
+/** A legacy sites.json entry with its secret resolved from the environment. */
+export interface LegacyResolvedSite {
+  site: SiteConfig;
+  password: string | null;
+  unavailableReason: string | null;
+}
+
 /**
- * Loads and validates `sites.json`, resolving each site's secret from the environment.
- * Throws {@link ConfigError} on missing/unparsable/invalid files — callers (src/index.ts)
- * are expected to log the message to stderr and exit(1), per SPEC.md §1.
+ * Loads and validates a legacy `sites.json`, resolving each site's secret from
+ * `env[passwordEnv]` (or its `_FILE` variant). Only used by `cli sites import` to migrate
+ * into the site store. Throws {@link ConfigError} on missing/unparsable/invalid files.
  */
-export function loadConfig(path: string, env: NodeJS.ProcessEnv = process.env): AppConfig {
+export function loadLegacySitesFile(
+  path: string,
+  env: NodeJS.ProcessEnv = process.env,
+): LegacyResolvedSite[] {
   let raw: string;
   try {
     raw = readFileSync(path, 'utf8');
@@ -120,15 +123,8 @@ export function loadConfig(path: string, env: NodeJS.ProcessEnv = process.env): 
     ids.add(site.id);
   }
 
-  const sites = result.data.sites.map((site) => resolveSite(site, env));
-
-  for (const site of sites) {
-    if (!site.available) {
-      process.stderr.write(
-        `[wp-fleet-mcp] warning: site "${site.id}" is unavailable: ${site.unavailableReason}\n`,
-      );
-    }
-  }
-
-  return { sites };
+  return result.data.sites.map(({ passwordEnv, ...site }) => {
+    const { password, reason } = resolveSecret(passwordEnv, env);
+    return { site, password, unavailableReason: reason };
+  });
 }

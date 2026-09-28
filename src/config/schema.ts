@@ -15,7 +15,6 @@ export const siteConfigSchema = z.object({
   name: z.string().min(1),
   url: z.string().url(),
   username: z.string().min(1),
-  passwordEnv: passwordEnvSchema,
   tags: z.array(z.string()).default([]),
   readOnly: z.boolean().default(false),
   allowHttp: z.boolean().default(false),
@@ -25,8 +24,18 @@ export const siteConfigSchema = z.object({
 export type SiteConfigInput = z.input<typeof siteConfigSchema>;
 export type SiteConfig = z.output<typeof siteConfigSchema>;
 
+/**
+ * Legacy `sites.json` entry: a site plus the name of the env var holding its application
+ * password. Only used by `cli sites import` to migrate an old sites.json + .env into the store.
+ */
+export const legacySiteConfigSchema = siteConfigSchema.extend({
+  passwordEnv: passwordEnvSchema,
+});
+
+export type LegacySiteConfig = z.output<typeof legacySiteConfigSchema>;
+
 export const sitesFileSchema = z.object({
-  sites: z.array(siteConfigSchema).min(1),
+  sites: z.array(legacySiteConfigSchema).min(1),
 });
 
 export type SitesFile = z.output<typeof sitesFileSchema>;
@@ -42,13 +51,12 @@ export interface ResolvedSite extends SiteConfig {
   unavailableReason: string | null;
 }
 
-export interface AppConfig {
-  sites: ResolvedSite[];
-}
-
 /** Global environment configuration, parsed once at startup. See SPEC.md §1. */
 export const envSchema = z.object({
-  SITES_CONFIG: z.string().optional(),
+  /** Path to the SQLite site store; see `resolveSitesDbPath` in src/store/site-store.ts. */
+  SITES_DB: z.string().optional(),
+  /** Base64 of 32 random bytes; encrypts application passwords at rest. */
+  SITES_ENCRYPTION_KEY: z.string().optional(),
   MCP_TRANSPORT: z.enum(['stdio', 'http']).default('stdio'),
   MCP_HTTP_PORT: z.coerce.number().int().positive().default(3000),
   MCP_HTTP_HOST: z.string().default('0.0.0.0'),

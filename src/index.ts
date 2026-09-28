@@ -1,8 +1,9 @@
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { AuditLogger } from './audit.js';
 import { envSchema } from './config/schema.js';
-import { ConfigError, loadConfig, resolveSitesConfigPath } from './config/loader.js';
 import { createServer } from './server.js';
+import { parseEncryptionKey } from './store/crypto.js';
+import { resolveSitesDbPath, SiteStore } from './store/site-store.js';
 import type { ToolContext } from './tools/context.js';
 import { SiteRegistry } from './wp/registry.js';
 
@@ -22,17 +23,26 @@ async function main(): Promise<void> {
   }
   const env = envResult.data;
 
-  const sitesPath = resolveSitesConfigPath(process.env);
-  let appConfig;
+  let store: SiteStore;
   try {
-    appConfig = loadConfig(sitesPath, process.env);
+    store = new SiteStore(resolveSitesDbPath(process.env), parseEncryptionKey(env.SITES_ENCRYPTION_KEY));
   } catch (err) {
-    fail(
-      err instanceof ConfigError || err instanceof Error ? err.message : String(err),
+    fail(err instanceof Error ? err.message : String(err));
+  }
+
+  const sites = store.load();
+  if (sites.length === 0) {
+    process.stderr.write(
+      '[wp-fleet-mcp] warning: no sites configured yet; add one with `node dist/cli.js sites add`\n',
+    );
+  }
+  for (const site of sites.filter((s) => !s.available)) {
+    process.stderr.write(
+      `[wp-fleet-mcp] warning: site "${site.id}" is unavailable: ${site.unavailableReason}\n`,
     );
   }
 
-  const registry = new SiteRegistry(appConfig.sites, { defaultTimeoutMs: env.WP_TIMEOUT_MS });
+  const registry = new SiteRegistry(store, { defaultTimeoutMs: env.WP_TIMEOUT_MS });
   const audit = new AuditLogger({ file: env.AUDIT_LOG_FILE });
 
   const ctx: ToolContext = {

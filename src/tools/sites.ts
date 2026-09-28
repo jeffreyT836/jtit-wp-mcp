@@ -80,7 +80,7 @@ export function register(server: McpServer, ctx: ToolContext): void {
     {
       title: 'List sites',
       description:
-        'Lists every site configured in sites.json (id, name, url, tags, readOnly, bridge, available). Never includes secrets.',
+        'Lists every configured site (id, name, url, tags, readOnly, bridge, available). Never includes secrets.',
       inputSchema: {
         tags: z.array(z.string()).optional().describe('Only include sites carrying all of these tags.'),
       },
@@ -113,7 +113,7 @@ export function register(server: McpServer, ctx: ToolContext): void {
       title: 'Check site',
       description:
         'Checks connectivity and authentication for one site: current user, roles, and nb-mcp-bridge status.',
-      inputSchema: { site: z.string().describe('Site id from sites.json') },
+      inputSchema: { site: z.string().describe('Site id (see list_sites)') },
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
     async ({ site: siteId }) => {
@@ -140,7 +140,7 @@ export function register(server: McpServer, ctx: ToolContext): void {
     {
       title: 'Site info',
       description: 'Fetches the WP REST index (name, description, url, timezone, namespaces) plus bridge status.',
-      inputSchema: { site: z.string().describe('Site id from sites.json') },
+      inputSchema: { site: z.string().describe('Site id (see list_sites)') },
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
     async ({ site: siteId }) => {

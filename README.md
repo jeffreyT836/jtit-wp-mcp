@@ -9,9 +9,10 @@ updates uitvoeren, rollen, status).
 
 `wp-fleet-mcp` is een [Model Context Protocol](https://modelcontextprotocol.io)-server die
 Claude (of een andere MCP-client) laat praten met meerdere WordPress-sites tegelijk, zonder
-dat Claude ooit een wachtwoord of URL zelf verzint. Elke site staat vooraf gedefinieerd in
-`config/sites.json`; de server praat alleen met die sites (allowlist, geen SSRF) en gebruikt
-per site een Application Password van een dedicated `mcp-bot`-gebruiker. Voor acties die WP
+dat Claude ooit een wachtwoord of URL zelf verzint. Elke site staat vooraf geregistreerd in
+een lokale, versleutelde **SQLite-store** (beheerd met `node dist/cli.js sites ...`, zie §2.2);
+de server praat alleen met die sites (allowlist, geen SSRF) en gebruikt per site een
+Application Password van een dedicated `mcp-bot`-gebruiker. Voor acties die WP
 core REST niet ondersteunt (updates uitvoeren, rollen opvragen, serverstatus) roept de server
 de `nb-mcp-bridge` mu-plugin aan, die je los op elke site installeert. De server draait als
 Docker-container en praat met de client via `stdio` (lokaal, bijv. Claude Code/Desktop) of
@@ -42,12 +43,30 @@ docker build -t wp-fleet-mcp .
 
 ```bash
 cp .env.example .env
-cp config/sites.example.json config/sites.json
 ```
 
-Vul `.env` met per site een `WP_<SITE>_APP_PASSWORD` (zie §4) en pas `config/sites.json` aan
-met de echte site-ids, URL's en `passwordEnv`-namen. `config/sites.json` en `.env` staan in
-`.gitignore` — commit ze nooit.
+Genereer een encryptiesleutel en zet die in `.env` als `SITES_ENCRYPTION_KEY` (zie §4):
+
+```bash
+openssl rand -base64 32
+```
+
+Sites worden niet meer in een JSON-bestand gezet, maar toegevoegd via de CLI. Die slaat ze op
+in een lokale SQLite-store (`./data/sites.db`, of `SITES_DB`) met het Application Password
+AES-256-GCM versleuteld:
+
+```bash
+SITES_ENCRYPTION_KEY=... node dist/cli.js sites add \
+  --id klant-a --name "Klant A" --url https://www.klant-a.nl \
+  --username mcp-bot --tags production
+```
+
+Het wachtwoord wordt hierna verborgen op het terminal gevraagd (nooit als argument). De
+draaiende MCP-server merkt een wijziging in de store vanzelf op (versieteller) en herlaadt de
+sites — een herstart is niet nodig na `sites add`/`remove`/`import`. Zie §2.3
+voor hoe je dat Application Password aanmaakt in WordPress zelf, en §4.2 voor alle
+`sites`-subcommando's (`list`, `remove`, `import`). `.env` en `data/` staan in `.gitignore` —
+commit ze nooit.
 
 ### 2.3 WordPress-kant instellen (per site)
 
@@ -56,8 +75,7 @@ met de echte site-ids, URL's en `passwordEnv`-namen. `config/sites.json` en `.en
    of netwerk-super-admins op multisite — hebben).
 2. Log in als `mcp-bot` → **Gebruikers → Profiel → Application Passwords** → geef een naam
    (bijv. `wp-fleet-mcp`) en klik **Add New Application Password**. Kopieer het wachtwoord
-   direct — het wordt maar één keer getoond — en zet het in `.env` als de site's
-   `passwordEnv`-waarde.
+   direct — het wordt maar één keer getoond — en plak het bij de `sites add`-prompt uit §2.2.
 3. Installeer de bridge-mu-plugin: kopieer `wordpress/nb-mcp-bridge/nb-mcp-bridge.php` naar
    `wp-content/mu-plugins/` op de site. Volledige installatie-instructies en troubleshooting:
    [`wordpress/nb-mcp-bridge/README.md`](wordpress/nb-mcp-bridge/README.md).
@@ -77,15 +95,17 @@ geregistreerd worden. Test met `list_sites` en `site_check` per site, en zet pas
 ```bash
 claude mcp add wp-fleet -s user -- docker run -i --rm \
   --env-file /absoluut/pad/naar/.env \
-  -v /absoluut/pad/naar/config/sites.json:/app/config/sites.json:ro \
+  -v wp-fleet-data:/app/data \
   -v wp-fleet-logs:/app/logs \
   wp-fleet-mcp
 ```
 
-Gebruik altijd **absolute paden** voor `--env-file` en de sites.json-mount. De
-`-v wp-fleet-logs:/app/logs` is alleen nodig als je `AUDIT_LOG_FILE` gebruikt (zie §4.2) — de
-container draait met een read-only root filesystem, dus zonder deze (of een andere) volume op
-`/app/logs` kan het audit-bestand niet weggeschreven worden.
+Gebruik altijd een **absoluut pad** voor `--env-file`. `SITES_ENCRYPTION_KEY` moet in dat
+`.env` staan. De `wp-fleet-data`-volume bevat de SQLite site-store (zie §2.2/§4.1); zonder die
+volume ben je na elke `docker run` je sites kwijt. `-v wp-fleet-logs:/app/logs` is alleen nodig
+als je `AUDIT_LOG_FILE` gebruikt (zie §4.2) — de container draait met een read-only root
+filesystem, dus zonder deze (of een andere) volume op `/app/logs` kan het audit-bestand niet
+weggeschreven worden.
 
 ### 3.2 Claude Desktop
 
@@ -99,7 +119,7 @@ In `claude_desktop_config.json`:
       "args": [
         "run", "-i", "--rm",
         "--env-file", "/absoluut/pad/naar/.env",
-        "-v", "/absoluut/pad/naar/config/sites.json:/app/config/sites.json:ro",
+        "-v", "wp-fleet-data:/app/data",
         "wp-fleet-mcp"
       ]
     }
@@ -138,7 +158,7 @@ docker run -d --rm \
   --env-file .env \
   -e MCP_TRANSPORT=http \
   -e MCP_HTTP_ALLOWED_HOSTS=localhost:3399,127.0.0.1:3399 \
-  -v "$PWD/config/sites.json:/app/config/sites.json:ro" \
+  -v wp-fleet-data:/app/data \
   -p 127.0.0.1:3399:3000 \
   wp-fleet-mcp
 ```
@@ -150,28 +170,56 @@ veranderen) — en werk `MCP_HTTP_ALLOWED_HOSTS` in dezelfde service dan bij naa
 
 ## 4. Configuratie
 
-### 4.1 `config/sites.json`
+### 4.1 Sites-store (CLI)
+
+Sites staan in een SQLite-store (`SITES_DB`, standaard `/app/data/sites.db` in de container,
+`./data/sites.db` lokaal), niet meer in een JSON-bestand. Beheer ze met `node dist/cli.js
+sites <command>`:
+
+```
+sites list
+sites add --id <id> --name <naam> --url <https://...> [--username mcp-bot]
+          [--tags a,b] [--read-only] [--allow-http] [--no-bridge] [--keep-password]
+sites remove --id <id>
+sites import --file <sites.json>
+```
+
+`add` vraagt het Application Password verborgen op het terminal (of leest het van stdin als
+dat gepiped wordt) — nooit als argument, zodat het niet in shell-historie of `ps` terechtkomt.
+`--keep-password` update een site zonder het wachtwoord te wijzigen. In Docker:
+
+```bash
+docker compose exec -it wp-mcp node dist/cli.js sites add --id klant-a --name "Klant A" --url https://www.klant-a.nl
+```
 
 | Veld | Verplicht | Standaard | Betekenis |
 |---|---|---|---|
 | `id` | ja | — | Uniek, `^[a-z0-9][a-z0-9-]{1,48}$` |
-| `name` | ja | — | Weergavenaam |
+| `name` | ja (of gelijk aan `id`) | — | Weergavenaam |
 | `url` | ja | — | Basis-URL; moet `https://` zijn tenzij `allowHttp: true` |
-| `username` | ja | — | WP-gebruikersnaam (de `mcp-bot`) |
-| `passwordEnv` | ja | — | Naam van de env var met het Application Password, `^[A-Z][A-Z0-9_]+$` |
+| `username` | nee | `mcp-bot` | WP-gebruikersnaam |
 | `tags` | nee | `[]` | Vrije labels, gebruikt door fleet-tools' `tags`-filter |
 | `readOnly` | nee | `false` | Weigert write-tools voor deze site |
 | `allowHttp` | nee | `false` | Staat `http://` toe (alleen lokale dev) |
 | `bridge` | nee | `true` | Of `nb-mcp-bridge` op deze site geïnstalleerd is |
 
-`sites.json` wordt gevalideerd met zod bij het opstarten; een ongeldig bestand stopt de
-server (exit 1).
+**Migreren vanaf een oude `sites.json` + `.env`:** `sites import` is precies daarvoor bedoeld
+— eenmalig, met de oude `WP_*_APP_PASSWORD`-vars nog in de omgeving:
+
+```bash
+SITES_ENCRYPTION_KEY=... SITES_DB=./data/sites.db node dist/cli.js sites import --file config/sites.json
+```
+
+In Docker doe je hetzelfde op de server (`docker compose exec -T wp-mcp node dist/cli.js sites
+import --file /pad/naar/sites.json`, met de `WP_*`-env-vars gezet), of lokaal met `SITES_DB`
+naar het doelbestand en de resulterende `sites.db` daarna naar de container kopiëren.
 
 ### 4.2 Environment-variabelen
 
 | Var | Standaard | Betekenis |
 |---|---|---|
-| `SITES_CONFIG` | `/app/config/sites.json` | Pad naar sites.json |
+| `SITES_DB` | `/app/data/sites.db` (container) / `./data/sites.db` (lokaal) | Pad naar de SQLite site-store |
+| `SITES_ENCRYPTION_KEY` | — | **Verplicht.** Base64 van 32 random bytes (`openssl rand -base64 32`); versleutelt Application Passwords (AES-256-GCM) in de store |
 | `MCP_TRANSPORT` | `stdio` | `stdio` of `http` |
 | `MCP_HTTP_PORT` | `3000` | Poort in http-modus |
 | `MCP_HTTP_HOST` | `0.0.0.0` | Bind-adres in http-modus |
@@ -185,20 +233,62 @@ server (exit 1).
 
 ### 4.3 Secrets
 
-Per site zoekt de server eerst `process.env[passwordEnv]`; is die leeg, dan leest hij het
-bestand op `process.env[passwordEnv + "_FILE"]` (Docker secrets-patroon, zie
-`WP_KLANT_A_APP_PASSWORD_FILE` in `.env.example`). Ontbreekt beide, dan blijft de site
-geladen maar met `available: false` en een reden (waarschuwing naar stderr, nooit stdout —
-dat is het stdio MCP-kanaal). Wachtwoorden komen nooit in tool-output, foutmeldingen of logs
-terecht.
+Elk Application Password ligt AES-256-GCM versleuteld in de SQLite-store, met de site-id als
+AAD (zo faalt een ciphertext die per ongeluk op een andere site's rij terechtkomt bij het
+decrypten in plaats van stilletjes het verkeerde wachtwoord op te leveren). Ontbreekt het
+wachtwoord (nog niet gezet, of decryptie mislukt door een verkeerde
+`SITES_ENCRYPTION_KEY`), dan blijft de site geladen maar met `available: false` en een reden
+(waarschuwing naar stderr, nooit stdout — dat is het stdio MCP-kanaal). Wachtwoorden komen
+nooit in tool-output, foutmeldingen, logs of CLI-argumenten terecht.
 
-`sites.json` staat los van de secrets omdat het **geen** geheime data bevat (site-ids, URL's,
-tags, feature-vlaggen) en dus prima meegecommit of gedeeld kan worden binnen het team, terwijl
-alleen `.env` (of Docker secrets) de wachtwoorden bevat en strikt privé blijft.
+`SITES_ENCRYPTION_KEY` is de enige sleutel tot alle opgeslagen wachtwoorden: bewaar hem in een
+password manager. Raak je hem kwijt, dan is er geen recovery — voeg elke site opnieuw toe met
+een vers Application Password.
 
-## 5. Beveiligingsmodel
+## 5. Productie (Hostinger)
 
-1. **Allowlist, geen SSRF** — de server praat uitsluitend met URL's uit `sites.json`; er is
+De productie-server draait via GitHub Actions, twee workflows in `.github/workflows/`:
+
+- **`ci.yml`** — lint, tests (met coverage-drempel) en build; draait op elke pull request, en
+  wordt door `deploy.yml` aangeroepen vóórdat er iets gedeployed wordt.
+- **`deploy.yml`** — bij elke push naar `main`: eerst `ci.yml`, dan bouwt en pusht hij de
+  Docker-image naar `ghcr.io/jeffreyt836/jtit-wp-mcp`, kopieert `docker-compose.prod.yml` via
+  scp naar `/docker/jtit-wp-mcp` op de server, en logt via SSH in om `docker compose pull` +
+  `up -d` te draaien en te wachten tot de container `healthy` is (health-check op
+  `/healthz`).
+
+Bij de **eerste** deploy genereert het script zelf een `.env` in `/docker/jtit-wp-mcp` met een
+willekeurige `MCP_HTTP_TOKEN` en `SITES_ENCRYPTION_KEY`; daarna wordt die `.env` nooit meer
+overschreven (een nieuwe `SITES_ENCRYPTION_KEY` zou alle opgeslagen wachtwoorden onleesbaar
+maken). Kopieer na die eerste deploy **beide waarden uit de server-`.env`** naar een password
+manager — zonder `SITES_ENCRYPTION_KEY` moet je alle Application Passwords opnieuw genereren.
+
+De server draait achter **Traefik** en is bereikbaar op `https://wp-mcp.jtit.nl/mcp`
+(bearer-token-auth, rate limiting via Traefik-middleware — zie `docker-compose.prod.yml`).
+
+**Vereisten om te deployen:**
+
+- Een GitHub-**environment** genaamd `Hostinger` met secrets `SSH_HOST`, `SSH_USER`, `SSH_KEY`.
+- Een DNS A-record `wp-mcp.jtit.nl` → het VPS-IP.
+- Een extern `traefik-network` Docker-netwerk op de server (de deploy faalt expliciet als dat
+  ontbreekt).
+
+Sites beheer je op de server net als lokaal, via de CLI in de draaiende container:
+
+```bash
+docker compose exec wp-mcp node dist/cli.js sites list
+docker compose exec -it wp-mcp node dist/cli.js sites add --id klant-a --name "Klant A" --url https://klant-a.nl
+```
+
+Claude Code verbinden met de productie-server:
+
+```bash
+claude mcp add --transport http wp-fleet https://wp-mcp.jtit.nl/mcp --header "Authorization: Bearer <token>"
+```
+
+## 6. Beveiligingsmodel
+
+1. **Allowlist, geen SSRF** — de server praat uitsluitend met URL's uit de site-store; er is
    geen tool die een vrije, door de gebruiker opgegeven URL aanroept.
 2. **Write-tools vereisen `confirm: true`.** Zonder `confirm` geven ze een dry-run preview
    terug (`{ dryRun: true, wouldDo: ... }`) en veranderen ze niets.
@@ -222,16 +312,16 @@ alleen `.env` (of Docker secrets) de wachtwoorden bevat en strikt privé blijft.
 9. **HTTPS verplicht** — Application Password-auth werkt alleen over HTTP wanneer
    `WP_ENVIRONMENT_TYPE` `local`/`development` is; elke andere omgeving moet HTTPS zijn.
 
-## 6. Tools overzicht
+## 7. Tools overzicht
 
-Alle tools nemen `site: string` (site-id uit `sites.json`) tenzij anders vermeld. Write-tools
+Alle tools nemen `site: string` (site-id uit de site-store) tenzij anders vermeld. Write-tools
 vereisen `confirm: true` om echt uit te voeren; zonder `confirm` volgt een dry-run preview.
 
 ### Sites
 
 | Tool | Wat | R/W | Bridge |
 |---|---|---|---|
-| `list_sites` | Lijst alle sites uit sites.json (id, name, url, tags, readOnly, bridge, available); optioneel filter op `tags` | R | nee |
+| `list_sites` | Lijst alle sites uit de site-store (id, name, url, tags, readOnly, bridge, available); optioneel filter op `tags` | R | nee |
 | `site_check` | Connectiviteit/auth-check: huidige user, roles, bridge-status | R | optioneel |
 | `site_info` | WP REST-index (name, description, url, timezone, namespaces) + bridge-status | R | optioneel |
 
@@ -303,7 +393,7 @@ Fleet-tools nemen optioneel `sites?: string[]` en `tags?: string[]` (default: al
 beschikbare sites); concurrency via `FLEET_CONCURRENCY`. Fouten op één site laten de rest van
 de call nooit falen.
 
-## 7. Voorbeeldprompts
+## 8. Voorbeeldprompts
 
 - "Geef me een `fleet_health`-overzicht van alle sites met tag `production`."
 - "Welke plugin-updates staan er klaar over de hele vloot? Maak een `fleet_updates_report`."
@@ -321,7 +411,7 @@ de call nooit falen.
 - "Geef een overzicht van alle geconfigureerde sites en welke read-only staan."
 - "Maak een nieuwe editor-gebruiker aan op `klant-a` en stuur geen wachtwoord mee."
 
-## 8. Ontwikkeling
+## 9. Ontwikkeling
 
 ### npm scripts
 
@@ -338,24 +428,41 @@ de call nooit falen.
 
 ```
 src/index.ts            entrypoint: config laden, server bouwen, transport kiezen
+src/cli.ts              CLI: sites list/add/remove/import (node dist/cli.js)
 src/server.ts           createServer(ctx) — registreert alle tools
 src/http.ts             Streamable HTTP transport + bearer-auth
 src/audit.ts            audit-logger (stderr + optioneel AUDIT_LOG_FILE)
-src/config/schema.ts    zod-schemas + types (sites.json, env)
-src/config/loader.ts    laadt en valideert config, lost secrets op
+src/config/schema.ts    zod-schemas + types (site config, legacy sites.json, env)
+src/config/loader.ts    resolveSite() + loadLegacySitesFile() (voor `sites import`)
+src/store/site-store.ts SiteStore — SQLite-backed sites (list/load/upsert/remove), versieteller
+src/store/crypto.ts     AES-256-GCM encrypt/decrypt van Application Passwords
 src/wp/client.ts        WpClient — REST-requests, timeouts, paginatie, bridge-calls
 src/wp/errors.ts        WpError + sanitatie van foutmeldingen
-src/wp/registry.ts      SiteRegistry — list/get/client/byTags per site
+src/wp/registry.ts      SiteRegistry — list/get/client/byTags per site, herlaadt bij store-wijziging
 src/tools/*.ts          één module per toolgroep (sites, plugins, themes, updates, users,
                          content, settings, fleet) + helpers.ts, context.ts, index.ts
 tests/**/*.test.ts      vitest, met gemockte fetch
 wordpress/nb-mcp-bridge/nb-mcp-bridge.php   de mu-plugin
 ```
 
-Tests staan onder `tests/tools/` (per toolmodule) en `tests/core/` (client, loader, sites,
+Tests staan onder `tests/tools/` (per toolmodule) en `tests/core/` (client, loader, store, cli,
 helpers); `tests/helpers/harness.ts` bevat gedeelde testopzet.
 
-## 9. Ideeën / roadmap
+## 10. Dashboard (gepland)
+
+Er komt een webdashboard op `wp-dashboard.jtit.nl`, in dezelfde repo als een monorepo
+(`apps/mcp`, `apps/dashboard`, `packages/site-store`). Het dashboard en de MCP-server delen
+dezelfde versleutelde SQLite-store: het dashboard schrijft sites en wachtwoorden, de
+MCP-server leest ze alleen (wachtwoordvelden in het dashboard zijn write-only — nooit
+teruggelezen of getoond). Toegang tot het dashboard vereist een sterke login (passkey/TOTP, of
+Traefik forward-auth).
+
+Belangrijk: de encryptie beschermt tegen het lekken van de database of een backup, niet tegen
+een gecompromitteerde VPS zelf (die kan de sleutel uit een draaiend proces lezen). Blijf dus
+ook aan de WP-kant least-privilege toepassen (dedicated `mcp-bot`-gebruiker, geen extra
+rechten) en Application Passwords intrekbaar/roteerbaar houden.
+
+## 11. Ideeën / roadmap
 
 Nog niet geïmplementeerd — kandidaten voor een volgende iteratie:
 

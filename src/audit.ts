@@ -10,7 +10,7 @@ export interface AuditEntry {
   error?: string;
 }
 
-const SECRET_KEYS = new Set(['password', 'passwordEnv', 'authorization', 'token']);
+const SECRET_KEYS = new Set(['password', 'passwordenv', 'secret', 'authorization', 'token']);
 
 /** Deep-clones `value`, replacing any key that looks like a secret with `"[redacted]"`. */
 function redact(value: unknown): unknown {

@@ -229,7 +229,7 @@ export function register(server: McpServer, ctx: ToolContext): void {
       description:
         'Lists available core, plugin, theme and translation updates for a site, via the nb-mcp-bridge mu-plugin. Pass refresh:true to force WordPress to check again (slower, hits wordpress.org) instead of using its cached transients. Use this before update_plugins/update_themes/update_core to see what is available. Read-only.',
       inputSchema: {
-        site: z.string().describe('Site id from sites.json'),
+        site: z.string().describe('Site id (see list_sites)'),
         refresh: z.boolean().optional().describe('Force a fresh update check instead of using cached data'),
       },
       annotations: { readOnlyHint: true, openWorldHint: true },
@@ -251,7 +251,7 @@ export function register(server: McpServer, ctx: ToolContext): void {
     description:
       'Updates one or more plugins to their latest available version on a site, via nb-mcp-bridge. Pass "plugins": ["dir/file", ...] (e.g. "akismet/akismet") for specific plugins, or "all": true to update every plugin that currently has an update available. This is a write tool: it requires confirm: true to actually run the update; without confirm it returns a dry-run preview listing each plugin with its current ("from") and available ("to") version, and changes nothing. Can take a while — uses WP_UPDATE_TIMEOUT_MS.',
     inputSchema: {
-      site: z.string().describe('Site id from sites.json'),
+      site: z.string().describe('Site id (see list_sites)'),
       plugins: z
         .array(z.string())
         .optional()
@@ -309,7 +309,7 @@ export function register(server: McpServer, ctx: ToolContext): void {
     description:
       'Updates one or more themes to their latest available version on a site, via nb-mcp-bridge. Pass "themes": ["stylesheet", ...] (e.g. "twentytwentyfour") for specific themes, or "all": true to update every theme that currently has an update available. This is a write tool: it requires confirm: true to actually run the update; without confirm it returns a dry-run preview listing each theme with its current ("from") and available ("to") version, and changes nothing. Can take a while — uses WP_UPDATE_TIMEOUT_MS.',
     inputSchema: {
-      site: z.string().describe('Site id from sites.json'),
+      site: z.string().describe('Site id (see list_sites)'),
       themes: z.array(z.string()).optional().describe('Theme stylesheet slugs, e.g. "twentytwentyfour"'),
       all: z.boolean().optional().describe('Update every theme that currently has an update available'),
       confirm: z.boolean().optional().describe('Must be true to actually update; otherwise a dry-run preview is returned'),
@@ -364,7 +364,7 @@ export function register(server: McpServer, ctx: ToolContext): void {
     description:
       'Updates WordPress core to the latest available version on a site, via nb-mcp-bridge. By default only minor/security updates are applied; pass allow_major:true to also allow a major version bump. This is a write tool: it requires confirm: true to actually run the update; without confirm it returns a dry-run preview of the available update (if any), and changes nothing. Can take a while — uses WP_UPDATE_TIMEOUT_MS.',
     inputSchema: {
-      site: z.string().describe('Site id from sites.json'),
+      site: z.string().describe('Site id (see list_sites)'),
       allow_major: z.boolean().optional().describe('Allow a major version update (default false: minor/security only)'),
       confirm: z.boolean().optional().describe('Must be true to actually update; otherwise a dry-run preview is returned'),
     },
@@ -421,7 +421,7 @@ export function register(server: McpServer, ctx: ToolContext): void {
     description:
       'Updates translation files for core, plugins and themes on a site, via nb-mcp-bridge. This is a write tool: it requires confirm: true to actually run; without confirm it returns a dry-run preview and changes nothing. Uses WP_UPDATE_TIMEOUT_MS.',
     inputSchema: {
-      site: z.string().describe('Site id from sites.json'),
+      site: z.string().describe('Site id (see list_sites)'),
       confirm: z.boolean().optional().describe('Must be true to actually update; otherwise a dry-run preview is returned'),
     },
     annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: true },

@@ -27,7 +27,7 @@ export function register(server: McpServer, ctx: ToolContext): void {
     {
       title: 'Get site settings',
       description: 'Fetches the site’s general settings (title, description, timezone, formats, etc). Read-only.',
-      inputSchema: { site: z.string().describe('Site id from sites.json') },
+      inputSchema: { site: z.string().describe('Site id (see list_sites)') },
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
     async ({ site: siteId }) => {
@@ -50,7 +50,7 @@ export function register(server: McpServer, ctx: ToolContext): void {
       'default_comment_status — any other key is rejected. Requires confirm:true; without it, returns a ' +
       'dry-run preview showing current -> new values for each key and changes nothing.',
     inputSchema: {
-      site: z.string().describe('Site id from sites.json'),
+      site: z.string().describe('Site id (see list_sites)'),
       values: settingsValuesSchema.describe('Allowlisted settings keys to change.'),
       confirm: z.boolean().optional().describe('Must be true to actually apply the change.'),
     },

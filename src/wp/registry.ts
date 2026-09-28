@@ -2,7 +2,7 @@ import type { ResolvedSite } from '../config/schema.js';
 import { WpClient, type FetchLike } from './client.js';
 import { assertSiteAccessible } from './errors.js';
 
-/** Thrown by {@link SiteRegistry.get} when a site id is not present in sites.json. */
+/** Thrown by {@link SiteRegistry.get} when a site id is not present in the site store. */
 export class SiteNotFoundError extends Error {
   constructor(id: string, knownIds: string[]) {
     super(
@@ -10,6 +10,16 @@ export class SiteNotFoundError extends Error {
     );
     this.name = 'SiteNotFoundError';
   }
+}
+
+/**
+ * Where the registry gets its sites from. `version()` must change whenever `load()` would
+ * return something different; it is checked on every lookup (the SQLite store makes this a
+ * single-row read), so sites added via the CLI or dashboard apply without a restart.
+ */
+export interface SiteSource {
+  version(): number;
+  load(): ResolvedSite[];
 }
 
 export interface SiteRegistryOptions {
@@ -24,25 +34,40 @@ export interface SiteRegistryOptions {
  * accepts a user-supplied URL, which is the SSRF allowlist guarantee from SPEC.md §2.
  */
 export class SiteRegistry {
-  private readonly sites: Map<string, ResolvedSite>;
-  private readonly clients = new Map<string, WpClient>();
+  private sites = new Map<string, ResolvedSite>();
+  private clients = new Map<string, WpClient>();
+  private loadedVersion: number | null = null;
+  private readonly source: SiteSource;
   private readonly options: SiteRegistryOptions;
 
-  constructor(sites: ResolvedSite[], options: SiteRegistryOptions = {}) {
-    this.sites = new Map(sites.map((site) => [site.id, site]));
+  /** Accepts a fixed list of sites (tests) or a live {@link SiteSource} (the site store). */
+  constructor(sites: ResolvedSite[] | SiteSource, options: SiteRegistryOptions = {}) {
+    this.source = Array.isArray(sites) ? { version: () => 0, load: () => sites } : sites;
     this.options = options;
   }
 
-  /** All configured sites, in declaration order. */
+  /** Reloads from the source when its version changed, dropping cached clients. */
+  private current(): Map<string, ResolvedSite> {
+    const version = this.source.version();
+    if (version !== this.loadedVersion) {
+      this.sites = new Map(this.source.load().map((site) => [site.id, site]));
+      this.clients = new Map();
+      this.loadedVersion = version;
+    }
+    return this.sites;
+  }
+
+  /** All configured sites, in the store's order. */
   list(): ResolvedSite[] {
-    return [...this.sites.values()];
+    return [...this.current().values()];
   }
 
   /** Looks up a site by id, throwing {@link SiteNotFoundError} if unknown. */
   get(id: string): ResolvedSite {
-    const site = this.sites.get(id);
+    const sites = this.current();
+    const site = sites.get(id);
     if (!site) {
-      throw new SiteNotFoundError(id, [...this.sites.keys()]);
+      throw new SiteNotFoundError(id, [...sites.keys()]);
     }
     return site;
   }
@@ -55,9 +80,9 @@ export class SiteRegistry {
    * a call path that only goes through the registry.
    */
   client(id: string): WpClient {
+    const site = this.get(id);
     const existing = this.clients.get(id);
     if (existing) return existing;
-    const site = this.get(id);
     assertSiteAccessible(site);
     const client = new WpClient(site, {
       fetch: this.options.fetch,

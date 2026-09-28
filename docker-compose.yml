@@ -8,18 +8,25 @@
 #   docker run -i --rm \
 #     --env-file .env \
 #     -e MCP_TRANSPORT=stdio \
-#     -v "$PWD/config/sites.json:/app/config/sites.json:ro" \
+#     -v wp-fleet-data:/app/data \
 #     -v wp-fleet-logs:/app/logs \
 #     wp-fleet-mcp
 #
 # The `mcp-stdio` service below runs the same image in stdio mode for local testing
 # with `docker compose --profile stdio run --rm mcp-stdio`.
 #
+# Sites live in the encrypted SQLite store on the `wp-fleet-data` volume; manage them with
+#   docker compose --profile http exec mcp-http node dist/cli.js sites add --id ... --url ...
+# (SITES_ENCRYPTION_KEY must be set in .env).
+#
+# Production (Hostinger, behind Traefik) uses docker-compose.prod.yml instead.
+#
 # Both services run with `read_only: true`, so if AUDIT_LOG_FILE is set (see .env.example,
 # default /app/logs/audit.jsonl) it needs a writable place to land: the `wp-fleet-logs` named
 # volume mounted at /app/logs below (owned by the "node" user the Dockerfile creates it for).
 
 volumes:
+  wp-fleet-data:
   wp-fleet-logs:
 
 services:
@@ -39,7 +46,7 @@ services:
     ports:
       - "127.0.0.1:3000:3000"
     volumes:
-      - ./config/sites.json:/app/config/sites.json:ro
+      - wp-fleet-data:/app/data
       - wp-fleet-logs:/app/logs
     read_only: true
     tmpfs:
@@ -58,7 +65,7 @@ services:
       MCP_TRANSPORT: stdio
     env_file: .env
     volumes:
-      - ./config/sites.json:/app/config/sites.json:ro
+      - wp-fleet-data:/app/data
       - wp-fleet-logs:/app/logs
     read_only: true
     tmpfs:

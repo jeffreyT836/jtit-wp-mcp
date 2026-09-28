@@ -118,7 +118,7 @@ export function register(server: McpServer, ctx: ToolContext): void {
       description:
         'Lists installed plugins on a site: plugin id (dir/file), name, version, activation status, author, and requirements. Use to see what is installed, what is active, or to find a plugin before activating/updating/deleting it. Optional status ("active"|"inactive") and search filters. Read-only.',
       inputSchema: {
-        site: z.string().describe('Site id from sites.json'),
+        site: z.string().describe('Site id (see list_sites)'),
         status: z.enum(['active', 'inactive']).optional().describe('Only plugins with this activation status'),
         search: z.string().optional().describe('Filter by a search term against plugin name/description'),
       },
@@ -141,7 +141,7 @@ export function register(server: McpServer, ctx: ToolContext): void {
     description:
       'Activates an installed plugin on a site. Plugin id is "dir/file" (with or without ".php"), e.g. "akismet/akismet" — get it from list_plugins. This is a write tool: it requires confirm: true to actually apply the change; without confirm it returns a dry-run preview and changes nothing.',
     inputSchema: {
-      site: z.string().describe('Site id from sites.json'),
+      site: z.string().describe('Site id (see list_sites)'),
       plugin: z.string().describe('Plugin identifier, e.g. "akismet/akismet"'),
       confirm: z.boolean().optional().describe('Must be true to actually activate; otherwise a dry-run preview is returned'),
     },
@@ -162,7 +162,7 @@ export function register(server: McpServer, ctx: ToolContext): void {
     description:
       'Deactivates an installed plugin on a site. Plugin id is "dir/file" (with or without ".php"), e.g. "akismet/akismet" — get it from list_plugins. This is a write tool: it requires confirm: true to actually apply the change; without confirm it returns a dry-run preview and changes nothing.',
     inputSchema: {
-      site: z.string().describe('Site id from sites.json'),
+      site: z.string().describe('Site id (see list_sites)'),
       plugin: z.string().describe('Plugin identifier, e.g. "akismet/akismet"'),
       confirm: z.boolean().optional().describe('Must be true to actually deactivate; otherwise a dry-run preview is returned'),
     },
@@ -183,7 +183,7 @@ export function register(server: McpServer, ctx: ToolContext): void {
     description:
       'Installs a plugin from the WordPress.org plugin directory onto a site by its slug (e.g. "akismet"), optionally setting its activation status. This is a write tool: it requires confirm: true to actually install; without confirm it returns a dry-run preview and changes nothing.',
     inputSchema: {
-      site: z.string().describe('Site id from sites.json'),
+      site: z.string().describe('Site id (see list_sites)'),
       slug: z.string().describe('WordPress.org plugin slug, e.g. "akismet" (not a premium/custom plugin)'),
       status: z.enum(['active', 'inactive']).optional().describe('Status to set after installing (default "inactive")'),
       confirm: z.boolean().optional().describe('Must be true to actually install; otherwise a dry-run preview is returned'),
@@ -208,7 +208,7 @@ export function register(server: McpServer, ctx: ToolContext): void {
     description:
       'Permanently deletes an installed plugin\'s files from a site. The plugin must already be deactivated (WordPress refuses to delete an active plugin). This is destructive and a write tool: it requires confirm: true to actually delete; without confirm it returns a dry-run preview and changes nothing.',
     inputSchema: {
-      site: z.string().describe('Site id from sites.json'),
+      site: z.string().describe('Site id (see list_sites)'),
       plugin: z.string().describe('Plugin identifier, e.g. "akismet/akismet"'),
       confirm: z.boolean().optional().describe('Must be true to actually delete; otherwise a dry-run preview is returned'),
     },

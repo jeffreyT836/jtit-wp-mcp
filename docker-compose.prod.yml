@@ -1,0 +1,62 @@
+# Productie-stack. De deploy-workflow kopieert dit bestand naar /docker/jtit-wp-mcp op de
+# server en hernoemt het daar naar docker-compose.yml. De .env in diezelfde map wordt bij de
+# eerste deploy eenmalig gegenereerd (MCP_HTTP_TOKEN, SITES_ENCRYPTION_KEY) en daarna nooit
+# overschreven.
+#
+# Sites beheren (op de server, in /docker/jtit-wp-mcp):
+#   docker compose exec wp-mcp node dist/cli.js sites list
+#   docker compose exec -it wp-mcp node dist/cli.js sites add --id klant-a --name "Klant A" --url https://klant-a.nl
+services:
+  wp-mcp:
+    image: ghcr.io/jeffreyt836/jtit-wp-mcp:latest
+    container_name: wp-mcp
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      MCP_TRANSPORT: http
+      MCP_HTTP_HOST: 0.0.0.0
+      MCP_HTTP_PORT: 3000
+      # Traefik geeft de Host-header zonder poort door.
+      MCP_HTTP_ALLOWED_HOSTS: wp-mcp.jtit.nl
+      SITES_DB: /app/data/sites.db
+      AUDIT_LOG_FILE: /app/logs/audit.jsonl
+    # Bewust geen host-poort: alleen bereikbaar via Traefik.
+    volumes:
+      - wp-mcp-data:/app/data
+      - wp-mcp-logs:/app/logs
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:3000/healthz']
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - traefik-network
+    labels:
+      - 'traefik.enable=true'
+      # Alleen /mcp publiek; /healthz blijft intern voor de Docker-healthcheck.
+      - 'traefik.http.routers.wp-mcp.rule=Host(`wp-mcp.jtit.nl`) && Path(`/mcp`)'
+      - 'traefik.http.routers.wp-mcp.entrypoints=websecure'
+      - 'traefik.http.routers.wp-mcp.tls.certresolver=letsencrypt'
+      - 'traefik.http.routers.wp-mcp.middlewares=wp-mcp-ratelimit'
+      - 'traefik.http.middlewares.wp-mcp-ratelimit.ratelimit.average=20'
+      - 'traefik.http.middlewares.wp-mcp-ratelimit.ratelimit.burst=40'
+      - 'traefik.http.services.wp-mcp.loadbalancer.server.port=3000'
+      - 'traefik.docker.network=traefik-network'
+
+volumes:
+  wp-mcp-data:
+    driver: local
+  wp-mcp-logs:
+    driver: local
+
+networks:
+  traefik-network:
+    external: true

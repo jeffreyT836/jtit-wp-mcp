@@ -1,0 +1,38 @@
+name: ci
+
+# Draait op pull requests en wordt door deploy.yml aangeroepen vóór elke deploy, zodat
+# een push naar main niet twee keer dezelfde checks draait.
+on:
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    name: Lint, test & build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run lint
+
+      - name: Test (with coverage threshold)
+        run: npm run test:coverage
+
+      - name: Build
+        run: npm run build
