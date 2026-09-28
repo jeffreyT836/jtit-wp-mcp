@@ -9,3 +9,4 @@ data/
 *.db-*
 .omc/
 wp-fleet-in-rdm-tool/
+.DS_Store
