@@ -4,3 +4,8 @@ coverage
 .env
 config/sites.json
 secrets/
+data/
+*.db
+*.db-*
+.omc/
+wp-fleet-in-rdm-tool/
