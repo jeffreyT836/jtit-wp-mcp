@@ -85,8 +85,10 @@ export function siteFormPage(opts: {
   hasPassword?: boolean;
   error?: string;
   offerSkipTest?: boolean;
+  /** The username currently stored, shown on edit so an autofilled value stands out. */
+  storedUsername?: string;
 }) {
-  const { csrf, values, mode, hasPassword, error, offerSkipTest } = opts;
+  const { csrf, values, mode, hasPassword, error, offerSkipTest, storedUsername } = opts;
   const action = mode === 'create' ? '/sites' : `/sites/${values.id}`;
   return html`
 <section class="card">
@@ -99,10 +101,14 @@ export function siteFormPage(opts: {
         <input name="id" value="${values.id}" required pattern="[a-z0-9][a-z0-9\\-]{1,48}" ${mode === 'edit' ? 'readonly' : ''}></label>
       <label>Naam <input name="name" value="${values.name}" required></label>
       <label>URL <input name="url" type="url" value="${values.url}" required></label>
-      <label>WordPress-gebruiker <input name="username" value="${values.username}" required></label>
+      <label>WordPress-gebruiker <small>(inlognaam of e-mailadres van de WP-gebruiker)</small>
+        <input name="wp_user" value="${values.username}" required autocomplete="off" spellcheck="false"
+          data-1p-ignore data-lpignore="true" data-bwignore data-form-type="other">
+        ${mode === 'edit' && storedUsername ? html`<small>Opgeslagen: <code>${storedUsername}</code></small>` : null}</label>
       <label>Tags <small>(komma-gescheiden)</small><input name="tags" value="${values.tags}"></label>
       <label>Application Password
-        <input name="password" type="password" autocomplete="new-password" ${mode === 'create' ? 'required' : ''}
+        <input name="app_password" type="password" autocomplete="new-password" ${mode === 'create' ? 'required' : ''}
+          data-1p-ignore data-lpignore="true" data-bwignore data-form-type="other"
           placeholder="${mode === 'edit' ? (hasPassword ? 'Laat leeg om ongewijzigd te laten' : 'Nog niet ingesteld') : 'xxxx xxxx xxxx xxxx xxxx xxxx'}">
         <small>Wordt versleuteld opgeslagen en nooit meer getoond.</small></label>
     </div>

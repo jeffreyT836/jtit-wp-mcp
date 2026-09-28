@@ -91,7 +91,9 @@ function formValues(body: Record<string, unknown>): SiteFormValues {
     id: s('id'),
     name: s('name'),
     url: s('url'),
-    username: s('username'),
+    // Deliberately not named "username"/"password": browsers and password managers
+    // autofill those with the dashboard's own login.
+    username: s('wp_user'),
     tags: s('tags'),
     readOnly: body.readOnly === 'on',
     allowHttp: body.allowHttp === 'on',
@@ -131,13 +133,13 @@ export function siteRoutes(ctx: RouteContext): Router {
     const submitted = formValues(req.body ?? {});
     const values = mode === 'edit' ? { ...submitted, id: String(req.params.id) } : submitted;
     const existing = store.list().find((s) => s.id === values.id);
-    const password = typeof req.body?.password === 'string' ? req.body.password.trim() : '';
+    const password = typeof req.body?.app_password === 'string' ? req.body.app_password.trim() : '';
     const rerender = (error: string, offerSkipTest = false, status = 422) =>
       renderPage(
         res,
         {
           title: mode === 'create' ? 'Site toevoegen' : 'Site bewerken',
-          body: siteFormPage({ csrf: auth.session.csrf_token, values, mode, hasPassword: existing?.hasPassword, error, offerSkipTest }),
+          body: siteFormPage({ csrf: auth.session.csrf_token, values, mode, hasPassword: existing?.hasPassword, error, offerSkipTest, storedUsername: existing?.username }),
         },
         status,
       );
@@ -192,7 +194,7 @@ export function siteRoutes(ctx: RouteContext): Router {
     if (!site) return res.redirect(303, '/');
     renderPage(res, {
       title: 'Site bewerken',
-      body: siteFormPage({ csrf: res.locals.auth!.session.csrf_token, values: toFormValues(site), mode: 'edit', hasPassword: site.hasPassword }),
+      body: siteFormPage({ csrf: res.locals.auth!.session.csrf_token, values: toFormValues(site), mode: 'edit', hasPassword: site.hasPassword, storedUsername: site.username }),
     });
   });
 

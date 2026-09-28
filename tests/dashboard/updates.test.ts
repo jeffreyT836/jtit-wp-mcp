@@ -302,7 +302,7 @@ describe('dashboard update flow', () => {
   it('saves extra health paths from the site form and rejects invalid ones', async () => {
     const browser = await loginAndEnroll(app.base);
     const edit = await (await browser.get('/sites/klant-a/edit')).text();
-    const fields = { _csrf: csrfOf(edit), name: 'Klant A', url: 'https://klant-a.nl', username: 'mcp-bot', bridge: 'on', skipTest: 'on' };
+    const fields = { _csrf: csrfOf(edit), name: 'Klant A', url: 'https://klant-a.nl', wp_user: 'mcp-bot', bridge: 'on', skipTest: 'on' };
     const bad = await browser.post('/sites/klant-a', { ...fields, healthPaths: 'https://evil.example' });
     expect(bad.status).toBe(422);
     await browser.post('/sites/klant-a', { ...fields, healthPaths: '/winkel\r\n\r\n/contact' });

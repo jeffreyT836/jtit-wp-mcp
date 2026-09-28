@@ -161,12 +161,15 @@ describe('dashboard app', () => {
       id: 'klant-a',
       name: 'Klant <A>',
       url: 'https://klant-a.nl',
-      username: 'mcp-bot',
+      wp_user: 'mcp-bot',
       tags: 'prod, woo',
       bridge: 'on',
     };
 
-    const failed = await browser.post('/sites', { ...fields, password: 'wrong password' });
+    expect(form).toContain('name="wp_user"');
+    expect(form).toContain('name="app_password"');
+    expect(form).not.toMatch(/name="(username|password)"/);
+    const failed = await browser.post('/sites', { ...fields, app_password: 'wrong password' });
     expect(failed.status).toBe(422);
     const failedHtml = await failed.text();
     expect(failedHtml).toContain('Application Password klopt niet');
@@ -174,7 +177,7 @@ describe('dashboard app', () => {
     expect(failedHtml).toContain('Klant &lt;A&gt;');
     expect(store.list()).toEqual([]);
 
-    const saved = await browser.post('/sites', { ...fields, password: GOOD_APP_PASSWORD });
+    const saved = await browser.post('/sites', { ...fields, app_password: GOOD_APP_PASSWORD });
     expect(saved.headers.get('location')).toBe('/sites/klant-a?saved=1');
     expect(store.load()[0]).toMatchObject({ id: 'klant-a', password: GOOD_APP_PASSWORD, tags: ['prod', 'woo'] });
 
@@ -186,7 +189,8 @@ describe('dashboard app', () => {
     }
 
     // Editing without a password keeps the stored one.
-    const updated = await browser.post('/sites/klant-a', { ...fields, _csrf: csrfOf(edit), name: 'Klant A', password: '' });
+    expect(edit).toContain('Opgeslagen: <code>mcp-bot</code>');
+    const updated = await browser.post('/sites/klant-a', { ...fields, _csrf: csrfOf(edit), name: 'Klant A', app_password: '' });
     expect(updated.status).toBe(303);
     expect(store.load()[0]).toMatchObject({ name: 'Klant A', password: GOOD_APP_PASSWORD });
 
@@ -207,7 +211,7 @@ describe('dashboard app', () => {
     const { browser } = await loginAndEnroll();
     const form = await (await browser.get('/sites/new')).text();
     const res = await browser.post('/sites', {
-      _csrf: csrfOf(form), id: 'klant-b', name: 'B', url: 'https://b.nl', username: 'mcp-bot', password: 'wrong', skipTest: 'on',
+      _csrf: csrfOf(form), id: 'klant-b', name: 'B', url: 'https://b.nl', wp_user: 'mcp-bot', app_password: 'wrong', skipTest: 'on',
     });
     expect(res.headers.get('location')).toBe('/sites/klant-b?saved=1&untested=1');
     expect(store.list()).toHaveLength(1);
