@@ -7,6 +7,9 @@ import { siteRoutes } from './routes/site-routes.js';
 import { updateRoutes } from './routes/update-routes.js';
 import { userRoutes } from './routes/user-routes.js';
 import { networkRoutes } from './routes/network-routes.js';
+import { alertRoutes } from './routes/alert-routes.js';
+import { AlertNotifier } from './notify.js';
+import { VulnerabilityDb } from '../wp/vulnerabilities.js';
 import { summarizeSite } from './snapshots.js';
 import { APP_CSS, APP_JS, FAVICON_SVG } from './views/assets.js';
 import type { NavData } from './views/layout.js';
@@ -73,7 +76,17 @@ function navData(ctx: RouteContext) {
           multisite: status.multisite === true,
         };
       });
-      const nav: NavData = { path: req.path, sites };
+      const alertCounts = ctx.db.openAlertCounts();
+      const vulnerable = ctx.store.list().filter((site) => {
+        const v = summarizeSite(snapshots.filter((s) => s.site_id === site.id && s.kind === 'fleet_vulnerabilities')).vulnerabilities;
+        return (v?.total ?? 0) > 0;
+      }).length;
+      const nav: NavData = {
+        path: req.path,
+        sites,
+        alerts: [...alertCounts.values()].reduce((a, b) => a + b, 0),
+        vulnerable,
+      };
       res.locals.nav = nav;
     }
     next();
@@ -84,7 +97,21 @@ function navData(ctx: RouteContext) {
 export function createDashboardApp(deps: DashboardDeps): express.Express {
   const app = express();
   const secure = deps.env.DASHBOARD_SECURE_COOKIES;
-  const ctx: RouteContext = { ...deps, sessions: new SessionManager(deps.db, secure) };
+  const notifier =
+    deps.notifier ??
+    new AlertNotifier({
+      url: deps.env.ALERT_WEBHOOK_URL,
+      token: deps.env.ALERT_WEBHOOK_TOKEN,
+      publicUrl: deps.env.DASHBOARD_PUBLIC_URL,
+      fetch: deps.fetch,
+      siteName: (id) => deps.store.list().find((s) => s.id === id)?.name,
+    });
+  const ctx: RouteContext = {
+    ...deps,
+    sessions: new SessionManager(deps.db, secure),
+    notifier,
+    vulnerabilities: deps.vulnerabilities ?? new VulnerabilityDb({ fetch: deps.fetch }),
+  };
 
   app.disable('x-powered-by');
   // Exactly one proxy hop (Traefik) in front; req.ip is then the real client IP.
@@ -113,6 +140,7 @@ export function createDashboardApp(deps: DashboardDeps): express.Express {
   app.use(updateRoutes(ctx));
   app.use(userRoutes(ctx));
   app.use(networkRoutes(ctx));
+  app.use(alertRoutes(ctx));
   app.use(siteRoutes(ctx));
 
   app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {

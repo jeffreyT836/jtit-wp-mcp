@@ -6,6 +6,7 @@ import { createServer } from '../../src/server.js';
 import type { ToolContext } from '../../src/tools/context.js';
 import type { FetchLike } from '../../src/wp/client.js';
 import { SiteRegistry } from '../../src/wp/registry.js';
+import { VulnerabilityDb } from '../../src/wp/vulnerabilities.js';
 
 export interface HarnessOptions {
   sites: ResolvedSite[];
@@ -13,6 +14,8 @@ export interface HarnessOptions {
   fetch?: FetchLike;
   env?: Partial<EnvConfig>;
   readOnlyGlobal?: boolean;
+  /** Defaults to a fresh VulnerabilityDb using the mocked fetch (no shared cache between tests). */
+  vulnerabilities?: VulnerabilityDb;
 }
 
 export interface Harness {
@@ -76,6 +79,7 @@ export async function createHarness(options: HarnessOptions): Promise<Harness> {
     env: { ...defaultEnv, ...options.env },
     audit,
     readOnlyGlobal: options.readOnlyGlobal ?? false,
+    vulnerabilities: options.vulnerabilities ?? new VulnerabilityDb({ fetch: options.fetch }),
   };
 
   const server = createServer(ctx);

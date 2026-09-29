@@ -14,6 +14,10 @@ export interface NavSite {
 export interface NavData {
   path: string;
   sites: NavSite[];
+  /** Open (unacknowledged) alerts. */
+  alerts?: number;
+  /** Sites with at least one known vulnerability. */
+  vulnerable?: number;
 }
 
 export interface LayoutOptions {
@@ -26,9 +30,10 @@ export interface LayoutOptions {
   flash?: { kind: 'ok' | 'error'; message: string };
 }
 
-function navLink(href: string, label: string, name: IconName, path: string, exact = true): SafeHtml {
+function navLink(href: string, label: string, name: IconName, path: string, exact = true, count?: { n: number; title: string; tone?: 'alert' }): SafeHtml {
   const active = exact ? path === href : path.startsWith(href);
-  return html`<a class="nav-item${active ? ' active' : ''}" href="${href}" ${active ? html`aria-current="page"` : null}>${icon(name)}<span>${label}</span></a>`;
+  const badge = count && count.n > 0 ? html`<span class="nav-count${count.tone ? ` ${count.tone}` : ''}" title="${count.title}">${String(count.n)}</span>` : null;
+  return html`<a class="nav-item${active ? ' active' : ''}" href="${href}" ${active ? html`aria-current="page"` : null}>${icon(name)}<span>${label}</span>${badge}</a>`;
 }
 
 function siteLinks(nav: NavData): SafeHtml {
@@ -44,6 +49,7 @@ function siteLinks(nav: NavData): SafeHtml {
         ? html`<div class="nav-sub">
             <a href="${base}#updates">Updates</a>
             <a href="${base}#health">Site Health</a>
+            <a href="${base}#vulnerabilities">Kwetsbaarheden</a>
             ${site.multisite ? html`<a href="${base}/network" class="${nav.path.startsWith(`${base}/network`) ? 'active' : ''}">Multisite</a>` : null}
             <a href="${base}/users" class="${nav.path === `${base}/users` ? 'active' : ''}">Gebruikers</a>
             <a href="${base}/edit" class="${nav.path === `${base}/edit` ? 'active' : ''}">Bewerken</a>
@@ -60,6 +66,8 @@ function sidebar(user: string, csrf: string | undefined, nav: NavData): SafeHtml
   </div>
   <nav>
     ${navLink('/', 'Overzicht', 'grid', nav.path)}
+    ${navLink('/alerts', 'Meldingen', 'alert', nav.path, true, { n: nav.alerts ?? 0, title: 'nieuwe meldingen', tone: 'alert' })}
+    ${navLink('/vulnerabilities', 'Kwetsbaarheden', 'shield', nav.path, true, { n: nav.vulnerable ?? 0, title: 'sites met bekende kwetsbaarheden' })}
     ${navLink('/sites/new', 'Site toevoegen', 'plus', nav.path)}
     <p class="nav-label">Sites <span>${String(nav.sites.length)}</span></p>
     <div class="nav-sites">${siteLinks(nav)}</div>

@@ -3,7 +3,9 @@ import type { DashboardEnv } from '../config/schema.js';
 import type { SiteStore } from '../store/site-store.js';
 import type { FetchLike } from '../wp/client.js';
 import type { SessionManager } from './auth/session.js';
+import type { VulnerabilityDb } from '../wp/vulnerabilities.js';
 import type { DashboardDb } from './db.js';
+import type { AlertNotifier } from './notify.js';
 import { layout, type LayoutOptions } from './views/layout.js';
 
 export interface DashboardDeps {
@@ -14,10 +16,16 @@ export interface DashboardDeps {
   totpKey: Buffer;
   /** Injectable for tests; forwarded to WpClient for connection tests. */
   fetch?: FetchLike;
+  /** Alert webhook; built from env when omitted. */
+  notifier?: AlertNotifier;
+  /** Vulnerability lookups for "scan now"; built with `fetch` when omitted. */
+  vulnerabilities?: VulnerabilityDb;
 }
 
 export interface RouteContext extends DashboardDeps {
   sessions: SessionManager;
+  notifier: AlertNotifier;
+  vulnerabilities: VulnerabilityDb;
 }
 
 /** Client IP as seen through Traefik (`trust proxy` is set to the first hop). */

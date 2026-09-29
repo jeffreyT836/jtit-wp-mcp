@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { siteIdSchema } from '../config/schema.js';
+import type { SeverityCounts } from '../wp/vulnerabilities.js';
 import type { DashboardDb, SnapshotRow } from './db.js';
 
 export const SNAPSHOT_RETENTION_DAYS = 30;
@@ -21,6 +22,13 @@ export type IngestBody = z.output<typeof ingestBodySchema>;
 const fleetResultSchema = z.object({
   results: z.array(z.object({ site: z.string(), ok: z.boolean() }).passthrough()),
 });
+
+/** Site ids an ingest payload stores a per-site snapshot for. */
+export function ingestedSiteIds(body: IngestBody, knownSiteIds: Set<string>): string[] {
+  if (body.site) return [body.site];
+  const fleet = fleetResultSchema.safeParse(body.data);
+  return fleet.success ? fleet.data.results.map((r) => r.site).filter((id) => knownSiteIds.has(id)) : [];
+}
 
 /** Stores an ingest payload; returns how many snapshot rows were written. */
 export function storeIngest(db: DashboardDb, body: IngestBody, knownSiteIds: Set<string>): number {
@@ -56,6 +64,9 @@ export interface SiteStatus {
   multisite?: boolean;
   health?: { critical: number; recommended: number; good: number };
   healthError?: string;
+  /** From `fleet_vulnerabilities`: vulnerabilities (not components) per severity. */
+  vulnerabilities?: SeverityCounts;
+  vulnerabilitiesError?: string;
 }
 
 type Json = Record<string, unknown>;
@@ -110,6 +121,17 @@ export function summarizeSite(snapshots: SnapshotRow[]): SiteStatus {
       }
       const n = (v: unknown) => (typeof v === 'number' ? v : 0);
       status.health = { critical: n(summary.critical), recommended: n(summary.recommended), good: n(summary.good) };
+    } else if (snap.kind === 'fleet_vulnerabilities') {
+      const summary = obj(data?.summary);
+      if (parsed.ok !== true || !summary) {
+        status.vulnerabilitiesError = stripTags(str(parsed.error) ?? 'onbekende fout');
+        continue;
+      }
+      const n = (v: unknown) => (typeof v === 'number' ? v : 0);
+      status.vulnerabilities = {
+        critical: n(summary.critical), high: n(summary.high), medium: n(summary.medium),
+        low: n(summary.low), unknown: n(summary.unknown), total: n(summary.total),
+      };
     }
   }
   return status;

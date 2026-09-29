@@ -55,7 +55,7 @@ export interface TestApp {
   close: () => Promise<void>;
 }
 
-export async function startApp(wpFetch: FetchLike): Promise<TestApp> {
+export async function startApp(wpFetch: FetchLike, envOverrides: Partial<DashboardEnv> = {}): Promise<TestApp> {
   const key = randomBytes(32);
   const db = new DashboardDb(':memory:');
   const store = new SiteStore(':memory:', key);
@@ -67,6 +67,8 @@ export async function startApp(wpFetch: FetchLike): Promise<TestApp> {
     DASHBOARD_SECURE_COOKIES: false,
     WP_TIMEOUT_MS: 5000,
     WP_UPDATE_TIMEOUT_MS: 5000,
+    ALERT_STALE_HOURS: 3,
+    ...envOverrides,
   };
   await seedAdmin(ADMIN, db);
   const app = createDashboardApp({ db, store, env, totpKey: deriveTotpKey(key), fetch: wpFetch });

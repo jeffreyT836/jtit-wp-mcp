@@ -11,6 +11,9 @@ import { latestUpdates, plainText } from '../updates.js';
 import { updatesSection } from '../views/update-views.js';
 import { latestHealth } from '../health.js';
 import { healthSection } from '../views/health-views.js';
+import { latestVulnerabilities } from '../vulnerabilities.js';
+import { vulnerabilitiesSection } from '../views/vulnerability-views.js';
+import { siteAlertsSection } from '../views/alert-views.js';
 import type { StoredSite } from '../../store/site-store.js';
 import {
   auditPage,
@@ -68,6 +71,7 @@ export function renderSiteDetail(
 ): void {
   const snapshots = ctx.db.latestSnapshots(site.id);
   const csrf = res.locals.auth!.session.csrf_token;
+  const updates = latestUpdates(snapshots);
   renderPage(res, {
     title: site.name,
     flash,
@@ -76,8 +80,10 @@ export function renderSiteDetail(
       site,
       status: summarizeSite(snapshots),
       snapshots,
-      updates: updatesSection({ csrf, site, snapshot: latestUpdates(snapshots) }),
+      alerts: siteAlertsSection(csrf, site.id, ctx.db.activeAlerts({ siteId: site.id })),
+      updates: updatesSection({ csrf, site, snapshot: updates }),
       health: healthSection({ csrf, site, snapshot: latestHealth(snapshots) }),
+      vulnerabilities: vulnerabilitiesSection({ csrf, site, snapshot: latestVulnerabilities(snapshots), updates: updates?.data }),
       audit: ctx.db.recentAudit(500).filter((a) => a.target === site.id).slice(0, 20),
     }),
   }, status);
@@ -120,7 +126,8 @@ export function siteRoutes(ctx: RouteContext): Router {
       site,
       status: summarizeSite(snapshots.filter((s) => s.site_id === site.id)),
     }));
-    renderPage(res, { title: 'Overzicht', body: overviewPage(rows) });
+    const alertCounts = db.openAlertCounts();
+    renderPage(res, { title: 'Overzicht', body: overviewPage(rows, [...alertCounts.values()].reduce((a, b) => a + b, 0)) });
   });
 
   router.get('/sites/new', (_req, res) => {
@@ -190,7 +197,9 @@ export function siteRoutes(ctx: RouteContext): Router {
         ? { kind: 'ok' as const, message: 'Updates opnieuw gecontroleerd.' }
         : req.query.health
           ? { kind: 'ok' as const, message: 'Site Health opnieuw gecontroleerd.' }
-          : undefined;
+          : req.query.scanned
+            ? { kind: 'ok' as const, message: 'Kwetsbaarheden gescand.' }
+            : undefined;
     renderSiteDetail(ctx, res, site, flash);
   });
 
@@ -214,6 +223,7 @@ export function siteRoutes(ctx: RouteContext): Router {
   router.post('/sites/:id/delete', requireCsrf, (req, res) => {
     const id = String(req.params.id);
     if (req.body?.confirm === 'on' && store.remove(id)) {
+      db.deleteAlertsForSite(id);
       db.audit(res.locals.auth!.user.email, 'site_deleted', id);
       return res.redirect(303, '/');
     }
@@ -229,7 +239,13 @@ export function siteRoutes(ctx: RouteContext): Router {
     const lastIngest = db.lastSnapshotReceivedAt();
     renderPage(res, {
       title: 'Instellingen',
-      body: settingsPage({ csrf: auth.session.csrf_token, email: auth.user.email, ingestLastSeen: lastIngest }),
+      body: settingsPage({
+        csrf: auth.session.csrf_token,
+        email: auth.user.email,
+        ingestLastSeen: lastIngest,
+        webhookConfigured: ctx.notifier.enabled,
+        staleHours: ctx.env.ALERT_STALE_HOURS,
+      }),
     });
   });
 

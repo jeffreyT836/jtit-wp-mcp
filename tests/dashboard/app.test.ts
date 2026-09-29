@@ -269,7 +269,7 @@ describe('dashboard app', () => {
       kind: 'fleet_health',
       data: { results: [{ site: 'klant-a', ok: true, data: { ok: true, roles: ['administrator'], bridge: 'ok', versions: { wp_version: '6.8.1' } } }] },
     });
-    expect(await ok.json()).toEqual({ success: true, data: { stored: 2 } });
+    expect(await ok.json()).toEqual({ success: true, data: { stored: 2, alerts: { opened: 0, resolved: 0 } } });
 
     const sites = await fetch(`${base}/api/sites`, { headers: { authorization: `Bearer ${INGEST_TOKEN}` } });
     expect(JSON.stringify(await sites.json())).not.toContain(GOOD_APP_PASSWORD);

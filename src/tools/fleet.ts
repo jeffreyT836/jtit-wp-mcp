@@ -8,6 +8,7 @@ import { errorResult, jsonResult, requireWritable, runFleet, selectSites } from 
 import { fetchPlugins, validatePluginId } from './plugins.js';
 import { fetchBridgeUpdates, stripPhp } from './updates.js';
 import { fetchSiteHealth } from '../wp/site-health.js';
+import { defaultVulnerabilityDb, emptyCounts, scanSite, SEVERITY_ORDER } from '../wp/vulnerabilities.js';
 
 const siteFilterSchema = {
   sites: z.array(z.string()).optional().describe('Restrict to these site ids (default: every available site)'),
@@ -90,7 +91,7 @@ async function fetchUsersForAudit(client: WpClient, role: string, email?: string
   return filtered.map((u) => ({ id: u.id, username: u.username ?? u.slug ?? '', email: u.email, roles: u.roles ?? [] }));
 }
 
-/** Registers `fleet_health`, `fleet_updates_report`, `fleet_find_plugin`, `fleet_user_audit`, `fleet_update_plugin`. See SPEC.md §4. */
+/** Registers `fleet_health`, `fleet_updates_report`, `fleet_site_health`, `fleet_vulnerabilities`, `fleet_find_plugin`, `fleet_user_audit`, `fleet_update_plugin`. See SPEC.md §4. */
 export function register(server: McpServer, ctx: ToolContext): void {
   server.registerTool(
     'fleet_health',
@@ -195,6 +196,61 @@ export function register(server: McpServer, ctx: ToolContext): void {
           },
           { sites: results.length, critical: 0, recommended: 0, failed: 0, skipped: skipped.length + selected.length - targets.length },
         );
+        return jsonResult({ summary, results, skipped });
+      } catch (err) {
+        return errorResult(err);
+      }
+    },
+  );
+
+  server.registerTool(
+    'fleet_vulnerabilities',
+    {
+      title: 'Fleet vulnerability scan',
+      description:
+        'Checks the installed WordPress core, plugins and themes of every site against the public WPVulnerability database (CVE, Wordfence, Patchstack and WPScan data; free, no API key) and returns, per site, only the components whose installed version has known vulnerabilities, with severity, affected range, the first fixed version when known, and references. Core is checked via nb-mcp-bridge /status. Only slugs and version numbers are sent to wpvulnerability.net, never site URLs or credentials; lookups are cached for six hours. Custom or premium plugins that are not on wordpress.org are simply not found. Filter with sites/tags; defaults to every available site. Per-site errors never fail the whole call. Read-only.',
+      inputSchema: {
+        ...siteFilterSchema,
+        min_severity: z
+          .enum(['critical', 'high', 'medium', 'low'])
+          .optional()
+          .describe('Only report vulnerabilities at or above this severity (default: all, including unknown)'),
+      },
+      annotations: { readOnlyHint: true, openWorldHint: true },
+    },
+    async ({ sites, tags, min_severity }) => {
+      try {
+        const { selected: targets, skipped } = selectSites(ctx.registry, { sites, tags });
+        const db = ctx.vulnerabilities ?? defaultVulnerabilityDb();
+        const keep = min_severity ? SEVERITY_ORDER.slice(0, SEVERITY_ORDER.indexOf(min_severity) + 1) : SEVERITY_ORDER;
+        const results = await runFleet(
+          targets,
+          async (site) => {
+            const report = await scanSite(ctx.registry.client(site.id), site, db);
+            if (!min_severity) return report;
+            const summary = emptyCounts();
+            const findings = report.findings
+              .map((f) => ({ ...f, vulnerabilities: f.vulnerabilities.filter((v) => keep.includes(v.severity)) }))
+              .filter((f) => f.vulnerabilities.length > 0);
+            for (const v of findings.flatMap((f) => f.vulnerabilities)) {
+              summary[v.severity] += 1;
+              summary.total += 1;
+            }
+            return { ...report, findings, summary };
+          },
+          ctx.env.FLEET_CONCURRENCY,
+        );
+        const totals = emptyCounts();
+        for (const r of results) {
+          for (const key of Object.keys(totals) as Array<keyof typeof totals>) totals[key] += r.data?.summary[key] ?? 0;
+        }
+        const summary = {
+          sites: results.length,
+          vulnerableSites: results.filter((r) => (r.data?.findings.length ?? 0) > 0).length,
+          ...totals,
+          failed: results.filter((r) => !r.ok).length,
+          skipped: skipped.length,
+        };
         return jsonResult({ summary, results, skipped });
       } catch (err) {
         return errorResult(err);

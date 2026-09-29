@@ -1,7 +1,8 @@
 import { timingSafeEqual } from 'node:crypto';
 import express, { Router, type NextFunction, type Request, type Response } from 'express';
 import type { RouteContext } from '../context.js';
-import { ingestBodySchema, storeIngest } from '../snapshots.js';
+import { ingestBodySchema, ingestedSiteIds, storeIngest } from '../snapshots.js';
+import { evaluateAndNotify } from './alert-routes.js';
 
 const INGEST_BODY_LIMIT = '1mb';
 
@@ -28,7 +29,7 @@ export function apiRoutes(ctx: RouteContext): Router {
   router.use(bearer(ctx.env.DASHBOARD_INGEST_TOKEN));
   router.use(express.json({ limit: INGEST_BODY_LIMIT }));
 
-  router.post('/ingest', (req, res) => {
+  router.post('/ingest', async (req, res) => {
     const parsed = ingestBodySchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(422).json({
@@ -43,7 +44,17 @@ export function apiRoutes(ctx: RouteContext): Router {
       return;
     }
     const stored = storeIngest(ctx.db, parsed.data, knownIds);
-    res.json({ success: true, data: { stored } });
+    const changes = await evaluateAndNotify(ctx, parsed.data.kind, ingestedSiteIds(parsed.data, knownIds));
+    res.json({
+      success: true,
+      data: {
+        stored,
+        alerts: {
+          opened: changes.filter((c) => c.change === 'opened').length,
+          resolved: changes.filter((c) => c.change === 'resolved').length,
+        },
+      },
+    });
   });
 
   /** Lets n8n discover which sites exist (no secrets). */

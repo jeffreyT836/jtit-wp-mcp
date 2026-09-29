@@ -98,6 +98,18 @@ export const dashboardEnvSchema = z.object({
     .transform((v) => v !== 'false'),
   WP_TIMEOUT_MS: z.coerce.number().int().positive().default(30000),
   WP_UPDATE_TIMEOUT_MS: z.coerce.number().int().positive().default(300000),
+  /** Webhook for alert notifications (Slack incoming webhook, n8n Webhook node, …). Off when unset. */
+  ALERT_WEBHOOK_URL: z
+    .string()
+    .url()
+    .refine((v) => /^https?:\/\//i.test(v), 'ALERT_WEBHOOK_URL must be an http(s) URL')
+    .optional(),
+  /** Optional bearer token sent to the alert webhook. */
+  ALERT_WEBHOOK_TOKEN: z.string().min(1).optional(),
+  /** Public dashboard URL for links in alert messages, e.g. https://wp-dashboard.jtit.nl */
+  DASHBOARD_PUBLIC_URL: z.string().url().optional(),
+  /** Alert when no n8n data arrived for this many hours. */
+  ALERT_STALE_HOURS: z.coerce.number().positive().default(3),
 });
 
 export type DashboardEnv = z.output<typeof dashboardEnvSchema>;

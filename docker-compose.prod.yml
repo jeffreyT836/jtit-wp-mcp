@@ -70,6 +70,8 @@ services:
       DASHBOARD_PORT: 3001
       SITES_DB: /app/data/sites.db
       DASHBOARD_DB: /app/dashboard-data/dashboard.db
+      # Links in meldingen. ALERT_WEBHOOK_URL (+ optioneel ALERT_WEBHOOK_TOKEN) zet je in .env.
+      DASHBOARD_PUBLIC_URL: https://wp-dashboard.jtit.nl
     volumes:
       # Zelfde site-store als wp-mcp: het dashboard schrijft, de MCP leest.
       - wp-mcp-data:/app/data

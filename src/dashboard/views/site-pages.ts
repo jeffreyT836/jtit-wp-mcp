@@ -5,6 +5,7 @@ import { alert, gauge, pageHead, panel, statusDot } from './components.js';
 import { html, type SafeHtml } from './html.js';
 import { icon } from './icons.js';
 import { healthBadges } from './health-views.js';
+import { vulnBadges } from './vulnerability-views.js';
 
 const fmtDate = (iso?: string | null) =>
   iso ? new Date(iso).toLocaleString('nl-NL', { timeZone: 'Europe/Amsterdam' }) : '—';
@@ -39,7 +40,7 @@ function tile(label: string, value: number, opts: { tone?: 'warn' | 'error'; sub
   </div>`;
 }
 
-export function overviewPage(rows: { site: StoredSite; status: SiteStatus }[]) {
+export function overviewPage(rows: { site: StoredSite; status: SiteStatus }[], openAlerts = 0) {
   const addButton = html`<a class="button" href="/sites/new">${icon('plus')} Site toevoegen</a>`;
   if (rows.length === 0) {
     return html`${pageHead('Overzicht', { eyebrow: 'Fleet', actions: addButton })}
@@ -47,20 +48,25 @@ export function overviewPage(rows: { site: StoredSite; status: SiteStatus }[]) {
   }
   const reachable = rows.filter((r) => r.status.reachable).length;
   const updates = rows.reduce((sum, r) => sum + pendingUpdates(r.status), 0);
-  const problems = rows.filter((r) => !r.site.hasPassword || r.status.reachable === false || r.status.updatesError).length;
+  const vulnerableSites = rows.filter((r) => (r.status.vulnerabilities?.total ?? 0) > 0).length;
+  const seriousVulns = rows.reduce((sum, r) => sum + (r.status.vulnerabilities ? r.status.vulnerabilities.critical + r.status.vulnerabilities.high : 0), 0);
+  const scanned = rows.filter((r) => r.status.vulnerabilities).length;
   const latest = rows.map((r) => r.status.collectedAt).filter(Boolean).sort().at(-1);
   return html`
 ${pageHead('Overzicht', { eyebrow: 'Fleet', sub: `Laatste data van n8n: ${fmtDate(latest)}`, actions: addButton })}
 <div class="tiles">
-  ${tile('Sites', rows.length)}
-  ${tile('Bereikbaar', reachable, { sub: `van ${rows.length}`, gaugePct: (reachable / rows.length) * 100 })}
+  ${tile('Bereikbaar', reachable, { sub: `van ${rows.length} sites`, gaugePct: (reachable / rows.length) * 100 })}
   ${tile('Updates open', updates, { tone: updates > 0 ? 'warn' : undefined, sub: 'plugins, thema\'s en core' })}
-  ${tile('Problemen', problems, { tone: problems > 0 ? 'error' : undefined, sub: problems ? 'bekijk de sites met een rode stip' : 'alles in orde' })}
+  ${tile('Kwetsbare sites', vulnerableSites, {
+    tone: seriousVulns > 0 ? 'error' : vulnerableSites > 0 ? 'warn' : undefined,
+    sub: scanned === 0 ? 'nog niet gescand' : seriousVulns > 0 ? `${seriousVulns} kritiek/hoog` : `${scanned} gescand`,
+  })}
+  ${tile('Meldingen', openAlerts, { tone: openAlerts > 0 ? 'error' : undefined, sub: openAlerts ? 'bekijk Meldingen' : 'alles in orde' })}
 </div>
 ${panel({
   id: 'sites', title: 'Sites', icon: 'globe', meta: String(rows.length), open: true,
   body: html`<div class="table-wrap"><table>
-    <thead><tr><th>Site</th><th>Status</th><th>WordPress</th><th>PHP</th><th>Bridge</th><th>Updates</th><th>Site Health</th><th>Laatste data</th></tr></thead>
+    <thead><tr><th>Site</th><th>Status</th><th>WordPress</th><th>PHP</th><th>Bridge</th><th>Updates</th><th>Site Health</th><th>Kwetsbaarheden</th><th>Laatste data</th></tr></thead>
     <tbody>
       ${rows.map(
         ({ site, status }) => html`<tr>
@@ -74,6 +80,7 @@ ${panel({
           <td class="version">${status.bridge ?? '—'}</td>
           <td>${updatesCell(status)}</td>
           <td>${healthBadges(status.health)}</td>
+          <td>${vulnBadges(status.vulnerabilities)}</td>
           <td><small>${fmtDate(status.collectedAt)}</small></td>
         </tr>`,
       )}
@@ -188,6 +195,7 @@ function hero(csrf: string, site: StoredSite, status: SiteStatus): SafeHtml {
     <span class="chip"><small>Bridge</small><b>${site.bridge ? (status.bridge ?? '—') : 'uit'}</b></span>
     <span class="chip"><small>Updates</small><b>${status.updates ? String(updates) : '—'}</b></span>
     <span class="chip"><small>Site Health</small>${healthBadges(status.health)}</span>
+    <span class="chip"><small>Kwetsbaarheden</small>${vulnBadges(status.vulnerabilities)}</span>
     ${status.multisite ? html`<span class="chip"><small>Type</small><b>multisite</b></span>` : null}
     <span class="chip"><small>Laatste data</small><b>${fmtDate(status.collectedAt)}</b></span>
   </div>
@@ -211,14 +219,18 @@ export function siteDetailPage(opts: {
   site: StoredSite;
   status: SiteStatus;
   snapshots: SnapshotRow[];
+  alerts: SafeHtml | null;
   updates: SafeHtml;
   health: SafeHtml;
+  vulnerabilities: SafeHtml;
   audit: AuditRow[];
 }) {
-  const { csrf, site, status, snapshots, updates, health, audit } = opts;
+  const { csrf, site, status, snapshots, alerts, updates, health, vulnerabilities, audit } = opts;
   return html`
 ${hero(csrf, site, status)}
+${alerts}
 ${updates}
+${vulnerabilities}
 ${health}
 ${panel({
   id: 'config', title: 'Configuratie', icon: 'sliders',
@@ -269,7 +281,7 @@ export function auditPage(rows: AuditRow[]) {
 <section class="card">${auditTable(rows)}</section>`;
 }
 
-export function settingsPage(opts: { csrf: string; email: string; ingestLastSeen?: string }) {
+export function settingsPage(opts: { csrf: string; email: string; ingestLastSeen?: string; webhookConfigured: boolean; staleHours: number }) {
   return html`
 ${pageHead('Instellingen', { eyebrow: 'Beheer' })}
 <section class="card">
@@ -279,6 +291,22 @@ ${pageHead('Instellingen', { eyebrow: 'Beheer' })}
     <dt>Tweestapsverificatie</dt><dd><span class="badge ok">${statusDot('ok')} actief</span></dd>
     <dt>Laatste data van n8n</dt><dd>${fmtDate(opts.ingestLastSeen)}</dd>
   </dl>
+</section>
+<section class="card">
+  <h2>Meldingen</h2>
+  <dl class="meta">
+    <dt>Webhook</dt><dd>${opts.webhookConfigured
+      ? html`<span class="badge ok">${statusDot('ok')} ingesteld</span>`
+      : html`<span class="badge muted">${statusDot('unknown')} niet ingesteld</span>`}</dd>
+    <dt>Geen data van n8n</dt><dd>melding na ${String(opts.staleHours)} uur</dd>
+  </dl>
+  <p class="hint">Nieuwe en opgeloste meldingen gaan naar <code>ALERT_WEBHOOK_URL</code> (een Slack incoming webhook, of een n8n-webhook die e-mail verstuurt). Optioneel: <code>ALERT_WEBHOOK_TOKEN</code> als bearer-token en <code>DASHBOARD_PUBLIC_URL</code> voor links in het bericht.</p>
+  ${opts.webhookConfigured
+    ? html`<form method="post" action="/settings/alerts/test" class="inline">
+        <input type="hidden" name="_csrf" value="${opts.csrf}">
+        <button type="submit" class="secondary" data-busy="Testmelding versturen…">${icon('activity')} Testmelding versturen</button>
+      </form>`
+    : null}
 </section>
 <section class="card">
   <h2>Tweestapsverificatie</h2>

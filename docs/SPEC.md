@@ -107,8 +107,10 @@ src/tools/users.ts      list_users, get_user, list_roles, create_user, update_us
                         delete_user, list_application_passwords, revoke_application_password
 src/tools/content.ts    list_posts, list_comments, moderate_comment
 src/tools/settings.ts   get_settings, update_settings
-src/tools/fleet.ts      fleet_health, fleet_updates_report, fleet_find_plugin,
-                        fleet_user_audit, fleet_update_plugin
+src/tools/fleet.ts      fleet_health, fleet_updates_report, fleet_site_health,
+                        fleet_vulnerabilities, fleet_find_plugin, fleet_user_audit,
+                        fleet_update_plugin
+src/wp/vulnerabilities.ts  WPVulnerability client (cached), PHP version_compare port, scanSite()
 src/audit.ts            audit logger
 tests/**/*.test.ts      vitest; fetch mocked (vi.stubGlobal / injected fetch)
 wordpress/nb-mcp-bridge/nb-mcp-bridge.php   mu-plugin (PHP)
@@ -155,6 +157,7 @@ concurrency `FLEET_CONCURRENCY`; per-site errors never fail the whole call):
 - `fleet_updates_report` → list_updates per site, summary counts + per-site details.
 - `fleet_find_plugin {query}` → sites where plugin file/slug/name matches, with version/status.
 - `fleet_user_audit {email?, role?="administrator"}` → per site the users matching.
+- `fleet_vulnerabilities {min_severity?}` → per site `{checked_at, checked:{core, plugins, themes}, findings:[{type, slug, name, version, status, vulnerabilities:[{id, name, severity, score?, affected, fixedIn?, unfixed, references}]}], summary:{critical, high, medium, low, unknown, total}, errors:[{type, slug, error}]}`. Installed plugins/themes via WP REST, core version via bridge `/status`; each unique slug/version is looked up once at `https://www.wpvulnerability.net/{plugin|theme|core}/{id}/` (the only non-site host the server contacts; only validated slugs/versions are sent), cached 6 h, 4 lookups in flight. 404 = nothing known; other failures land in `errors` (unknown, not safe). Applicability mirrors PHP `version_compare` against the `operator` min/max bounds.
 - `fleet_update_plugin {plugin, confirm}` → on every matching site with an update available for that plugin, run update_plugins; skips readOnly sites (reported). Dry-run by default.
 
 ## 5. Bridge REST API contract (`nb-mcp-bridge.php`, namespace `nb-mcp/v1`)

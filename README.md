@@ -289,7 +289,10 @@ claude mcp add --transport http wp-fleet https://wp-mcp.jtit.nl/mcp --header "Au
 ## 6. Beveiligingsmodel
 
 1. **Allowlist, geen SSRF** — de server praat uitsluitend met URL's uit de site-store; er is
-   geen tool die een vrije, door de gebruiker opgegeven URL aanroept.
+   geen tool die een vrije, door de gebruiker opgegeven URL aanroept. Eén vaste uitzondering:
+   `fleet_vulnerabilities` (en "Nu scannen" in het dashboard) vraagt
+   `https://www.wpvulnerability.net` naar bekende kwetsbaarheden. Daarheen gaan alleen
+   wordpress.org-slugs en versienummers (gevalideerd), nooit een site-URL, gebruiker of wachtwoord.
 2. **Write-tools vereisen `confirm: true`.** Zonder `confirm` geven ze een dry-run preview
    terug (`{ dryRun: true, wouldDo: ... }`) en veranderen ze niets.
 3. **Read-only per site en globaal** — `readOnly: true` op een site weigert write-tools voor
@@ -385,6 +388,8 @@ vereisen `confirm: true` om echt uit te voeren; zonder `confirm` volgt een dry-r
 |---|---|---|---|
 | `fleet_health` | Health-check over de hele vloot (auth, roles, bridge + WP/PHP-versies); filter `sites`/`tags` | R | optioneel |
 | `fleet_updates_report` | Update-rapport over de hele vloot met totalen + per-site details | R | **ja** |
+| `fleet_site_health` | WordPress Site Health over de hele vloot (kritiek/aanbevolen per site) | R | **ja** (1.2.0) |
+| `fleet_vulnerabilities` | Bekende kwetsbaarheden in de geïnstalleerde core-, plugin- en themaversies (WPVulnerability-database), met ernst, getroffen versies en "opgelost in"; optioneel `min_severity` | R | optioneel (voor core) |
 | `fleet_find_plugin` | Zoekt een plugin (bestand/slug/naam, case-insensitive) over de hele vloot | R | nee |
 | `fleet_user_audit` | Gebruikers per rol (default `administrator`), optioneel gefilterd op e-mail, over de hele vloot | R | nee |
 | `fleet_update_plugin` | Update één plugin op elke site met een beschikbare update; slaat `readOnly`-sites over (gerapporteerd) | W | **ja** |
@@ -469,6 +474,12 @@ Per site:
   gebruikersbeheer van die subsite. Gebruikers verwijderen betekent op multisite "van de site
   verwijderen" (het account blijft in het netwerk). De gekoppelde gebruiker moet superbeheerder
   zijn. Vereist nb-mcp-bridge 1.2.0.
+- **Kwetsbaarheden** — welke geïnstalleerde versies van core, plugins en thema's bekende lekken
+  hebben (bron: [WPVulnerability](https://www.wpvulnerability.com), gratis, zonder API-key;
+  bundelt CVE-, Wordfence-, Patchstack- en WPScan-data). Per onderdeel de ernst, getroffen
+  versies, "opgelost in" en of een openstaande update het oplost. Dagelijks via n8n
+  (`fleet_vulnerabilities`) of live met "Nu scannen". Premium/maatwerk-plugins die niet op
+  wordpress.org staan kunnen niet gecontroleerd worden. Fleet-overzicht op `/vulnerabilities`.
 - **Gebruikers** (`/sites/<id>/users`) — live lijst van WordPress-gebruikers met rol, gebruikers
   aanmaken (gebruikersnaam, e-mail, rol, wachtwoord) en verwijderen met overdracht van hun
   inhoud. Het wachtwoord gaat alleen via HTTPS naar WordPress; het dashboard slaat het niet op,
@@ -476,6 +487,36 @@ Per site:
   worden verwijderd. Rollen komen via de bridge (inclusief maatwerkrollen zoals
   `shop_manager`), zonder bridge de standaardrollen. Op sites met "alleen lezen" is alleen de
   lijst beschikbaar.
+
+### 10.1 Meldingen
+
+Het dashboard beoordeelt elke binnenkomende snapshot (van n8n of een live controle) en houdt
+meldingen bij op `/alerts` (met teller in de zijbalk en een paneel op de site-pagina):
+
+| Melding | Wanneer | Ernst | Verdwijnt |
+|---|---|---|---|
+| Site niet bereikbaar / inloggen mislukt | `fleet_health` faalt **twee keer achter elkaar** | kritiek | vanzelf bij herstel |
+| Koppel-gebruiker geen administrator | `fleet_health`: rol `administrator` ontbreekt | waarschuwing | vanzelf |
+| nb-mcp-bridge ontbreekt / geeft fout | `fleet_health`, bridge aan voor de site | waarschuwing | vanzelf |
+| Site Health kritiek: … | per kritieke test in `fleet_site_health` | waarschuwing | vanzelf |
+| Kwetsbare plugin/thema/core | `fleet_vulnerabilities`, per onderdeel, ernst middel of hoger | kritiek (hoog/kritiek) of waarschuwing | vanzelf na update; niet bij een onvolledige scan |
+| Nieuw administrator-account | `fleet_user_audit` ziet een admin die de vorige audit niet had | kritiek | pas na "Gezien, afsluiten" |
+| Geen data van n8n | niets ontvangen in `ALERT_STALE_HOURS` (standaard 3) uur | waarschuwing | vanzelf |
+
+"Gezien" dempt een melding (blijft grijs zichtbaar tot het probleem weg is). Alleen
+**overgangen** (nieuw / opgelost) worden verstuurd, gebundeld per n8n-run, naar een optionele
+webhook:
+
+| Var | Betekenis |
+|---|---|
+| `ALERT_WEBHOOK_URL` | Slack incoming webhook, of een n8n-webhook (zie [`n8n/README.md`](n8n/README.md) voor e-mail). Leeg = alleen in het dashboard. |
+| `ALERT_WEBHOOK_TOKEN` | Optioneel; meegestuurd als `Authorization: Bearer …` |
+| `DASHBOARD_PUBLIC_URL` | Optioneel; voor links in het bericht, bijv. `https://wp-dashboard.jtit.nl` |
+| `ALERT_STALE_HOURS` | Uren zonder n8n-data voordat er een melding komt (standaard `3`) |
+
+De payload bevat `text` (direct te posten in Slack/Mattermost/Google Chat) plus gestructureerde
+`opened`/`resolved`-lijsten. Test de koppeling via **Instellingen → Testmelding versturen**.
+Opgeloste meldingen worden 90 dagen bewaard.
 
 Belangrijk: de encryptie beschermt tegen het lekken van de database of een backup, niet tegen
 een gecompromitteerde VPS zelf (die kan de sleutel uit een draaiend proces lezen). Blijf dus
@@ -489,6 +530,5 @@ Nog niet geïmplementeerd — kandidaten voor een volgende iteratie:
 - Backup-status check (bevestigen dat een backup-plugin/dienst recent gedraaid heeft).
 - Uptime- en SSL-certificaat-vervaldatum-check per site.
 - WooCommerce-statusoverzicht (bestellingen, voorraadwaarschuwingen).
-- WordPress Site Health-tests via de bridge ontsluiten.
 - Geplande/periodieke rapporten (bijv. wekelijks update- en healthrapport per mail/Slack).
 - Integratie met SatisPress voor privé-pluginversies binnen de vloot.

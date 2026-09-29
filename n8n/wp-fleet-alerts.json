@@ -1,0 +1,71 @@
+{
+  "name": "WP Fleet → meldingen per e-mail",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wp-fleet-alerts",
+        "authentication": "headerAuth",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "b2e1d8b3-0001-4b7f-8b02-000000000001",
+      "name": "Webhook: melding ontvangen",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "b2e1d8b3-0003-4b7f-8b02-000000000003",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "WP Fleet alerts token"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fromEmail": "wp-fleet@example.nl",
+        "toEmail": "beheer@example.nl",
+        "subject": "={{ $json.body.test ? 'Testmelding' : ($json.body.opened.length ? '🔴 ' + $json.body.opened.length + ' nieuwe melding(en)' : '✅ ' + $json.body.resolved.length + ' melding(en) opgelost') }} — WP Fleet",
+        "emailFormat": "text",
+        "text": "={{ $json.body.text }}",
+        "options": {}
+      },
+      "id": "b2e1d8b3-0002-4b7f-8b02-000000000002",
+      "name": "E-mail versturen",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        260,
+        0
+      ],
+      "credentials": {
+        "smtp": {
+          "id": "",
+          "name": "SMTP"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook: melding ontvangen": {
+      "main": [
+        [
+          {
+            "node": "E-mail versturen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/Amsterdam"
+  },
+  "active": false
+}

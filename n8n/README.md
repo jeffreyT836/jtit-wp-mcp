@@ -10,6 +10,11 @@ toont op https://wp-dashboard.jtit.nl.
 | Dagelijks 06:00 | `fleet_updates_report` + `refresh: true` | laat elke site opnieuw naar updates zoeken |
 | Dagelijks 06:00 | `fleet_user_audit` (administrators) | alle admin-accounts per site (site-detailpagina) |
 | Dagelijks 06:00 | `fleet_site_health` | WordPress Site Health per site (vereist nb-mcp-bridge 1.2.0) |
+| Dagelijks 06:00 | `fleet_vulnerabilities` | bekende kwetsbaarheden in core, plugins en thema's (WPVulnerability) |
+
+Na elke opslag beoordeelt het dashboard de data op meldingen (onbereikbaar, nieuwe admin,
+kwetsbaarheid, …; zie README §10.1). Het antwoord van `/api/ingest` bevat
+`alerts: { opened, resolved }`.
 
 ```
 Elk uur ─────────► Tools (elk uur) ────┐
@@ -35,6 +40,27 @@ voor een melding). Alle schema's draaien in tijdzone Europe/Amsterdam.
    | `WP Dashboard ingest token` | `Authorization` | `Bearer <DASHBOARD_INGEST_TOKEN>` |
 3. **Importeren:** Workflows → Import from File → `wp-fleet-sync.json`, koppel beide
    HTTP-nodes aan de juiste credential, test met *Execute workflow* en zet hem daarna op actief.
+
+## Meldingen per e-mail (optioneel)
+
+`wp-fleet-alerts.json` is een tweede workflow die meldingen van het dashboard ontvangt en per
+e-mail doorstuurt. Voor Slack heb je hem niet nodig: zet dan een Slack incoming-webhook-URL
+direct in `ALERT_WEBHOOK_URL`.
+
+1. Importeer `wp-fleet-alerts.json`, open de node **Webhook: melding ontvangen** en koppel een
+   *Header Auth*-credential (`Authorization` / `Bearer <een nieuw random token>`, bijv.
+   `openssl rand -hex 32`).
+2. Open **E-mail versturen**: koppel je SMTP-credential en vul afzender en ontvanger in.
+3. Zet de workflow op actief en kopieer de **Production URL** van de webhook-node. Intern op het
+   Docker-netwerk is dat `http://<n8n-container>:5678/webhook/wp-fleet-alerts`.
+4. Zet in `/docker/jtit-wp-mcp/.env` op de server:
+   ```
+   ALERT_WEBHOOK_URL=http://<n8n-container>:5678/webhook/wp-fleet-alerts
+   ALERT_WEBHOOK_TOKEN=<hetzelfde token als in stap 1, zonder "Bearer ">
+   DASHBOARD_PUBLIC_URL=https://wp-dashboard.jtit.nl
+   ```
+   en herstart het dashboard (`docker compose up -d wp-dashboard`).
+5. Dashboard → **Instellingen → Testmelding versturen**.
 
 ## Zelf uitbreiden
 

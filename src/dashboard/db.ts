@@ -2,7 +2,7 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 const DEFAULT_CONTAINER_DIR = '/app/dashboard-data';
 const DEFAULT_LOCAL_PATH = './data/dashboard.db';
 
@@ -45,6 +45,33 @@ export interface SnapshotRow {
   received_at: string;
 }
 
+export type AlertStatus = 'pending' | 'open' | 'acknowledged' | 'resolved';
+export type AlertSeverity = 'critical' | 'warning';
+
+export interface AlertRow {
+  id: number;
+  /** Identifies one condition, e.g. "unreachable:klant-a"; unique among non-resolved alerts. */
+  key: string;
+  site_id: string | null;
+  type: string;
+  /** Snapshot kind (or "system") whose evaluation raised it. */
+  source: string;
+  severity: AlertSeverity;
+  title: string;
+  /** JSON. */
+  details: string | null;
+  /** "state": resolves itself when the condition is gone; "event": stays until acknowledged. */
+  state_kind: 'state' | 'event';
+  status: AlertStatus;
+  hits: number;
+  first_seen: string;
+  last_seen: string;
+  opened_at: string | null;
+  resolved_at: string | null;
+  acknowledged_at: string | null;
+  acknowledged_by: string | null;
+}
+
 export interface AuditRow {
   id: number;
   ts: string;
@@ -73,7 +100,7 @@ export class DashboardDb {
       user_version: number;
     };
     if (current >= SCHEMA_VERSION) return;
-    this.db.exec(`
+    if (current < 1) this.db.exec(`
       CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY,
         email TEXT NOT NULL UNIQUE,
@@ -111,8 +138,31 @@ export class DashboardDb {
         target TEXT,
         details TEXT
       );
-      PRAGMA user_version = ${SCHEMA_VERSION};
     `);
+    if (current < 2) this.db.exec(`
+      CREATE TABLE IF NOT EXISTS alerts (
+        id INTEGER PRIMARY KEY,
+        key TEXT NOT NULL,
+        site_id TEXT,
+        type TEXT NOT NULL,
+        source TEXT NOT NULL,
+        severity TEXT NOT NULL,
+        title TEXT NOT NULL,
+        details TEXT,
+        state_kind TEXT NOT NULL,
+        status TEXT NOT NULL,
+        hits INTEGER NOT NULL DEFAULT 1,
+        first_seen TEXT NOT NULL,
+        last_seen TEXT NOT NULL,
+        opened_at TEXT,
+        resolved_at TEXT,
+        acknowledged_at TEXT,
+        acknowledged_by TEXT
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS alerts_active_key ON alerts (key) WHERE status IN ('pending', 'open', 'acknowledged');
+      CREATE INDEX IF NOT EXISTS alerts_site ON alerts (site_id, status);
+    `);
+    this.db.exec(`PRAGMA user_version = ${SCHEMA_VERSION};`);
   }
 
   // --- users ---
@@ -241,8 +291,94 @@ export class DashboardDb {
     return row.ts ?? undefined;
   }
 
+  /** Newest `limit` snapshots of one (site, kind), newest first. */
+  recentSnapshots(siteId: string | null, kind: string, limit = 2): SnapshotRow[] {
+    return this.db
+      .prepare('SELECT * FROM snapshots WHERE site_id IS ? AND kind = ? ORDER BY collected_at DESC, id DESC LIMIT ?')
+      .all(siteId, kind, limit) as unknown as SnapshotRow[];
+  }
+
   pruneSnapshots(olderThan: string): void {
     this.db.prepare('DELETE FROM snapshots WHERE received_at < ?').run(olderThan);
+  }
+
+  // --- alerts ---
+
+  /** Alerts that are not resolved yet (pending, open, acknowledged). */
+  activeAlerts(filter: { siteId?: string | null; source?: string } = {}): AlertRow[] {
+    const where = ["status != 'resolved'"];
+    const args: Array<string | null> = [];
+    if (filter.siteId !== undefined) {
+      where.push('site_id IS ?');
+      args.push(filter.siteId);
+    }
+    if (filter.source !== undefined) {
+      where.push('source = ?');
+      args.push(filter.source);
+    }
+    return this.db
+      .prepare(`SELECT * FROM alerts WHERE ${where.join(' AND ')} ORDER BY id`)
+      .all(...args) as unknown as AlertRow[];
+  }
+
+  alertById(id: number): AlertRow | undefined {
+    return this.db.prepare('SELECT * FROM alerts WHERE id = ?').get(id) as AlertRow | undefined;
+  }
+
+  insertAlert(row: Omit<AlertRow, 'id' | 'resolved_at' | 'acknowledged_at' | 'acknowledged_by'>): AlertRow {
+    const result = this.db
+      .prepare(
+        `INSERT INTO alerts (key, site_id, type, source, severity, title, details, state_kind, status, hits, first_seen, last_seen, opened_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(row.key, row.site_id, row.type, row.source, row.severity, row.title, row.details, row.state_kind, row.status, row.hits, row.first_seen, row.last_seen, row.opened_at);
+    return this.alertById(Number(result.lastInsertRowid))!;
+  }
+
+  updateAlert(id: number, patch: Partial<Pick<AlertRow, 'severity' | 'title' | 'details' | 'status' | 'hits' | 'last_seen' | 'opened_at' | 'resolved_at' | 'acknowledged_at' | 'acknowledged_by'>>): void {
+    const keys = Object.keys(patch) as Array<keyof typeof patch>;
+    if (keys.length === 0) return;
+    this.db
+      .prepare(`UPDATE alerts SET ${keys.map((k) => `${k} = ?`).join(', ')} WHERE id = ?`)
+      .run(...keys.map((k) => patch[k] ?? null), id);
+  }
+
+  deleteAlert(id: number): void {
+    this.db.prepare('DELETE FROM alerts WHERE id = ?').run(id);
+  }
+
+  /** Open and acknowledged alerts, then the latest resolved ones. */
+  listAlerts(resolvedLimit = 100): { active: AlertRow[]; resolved: AlertRow[] } {
+    const active = this.db
+      .prepare("SELECT * FROM alerts WHERE status IN ('open', 'acknowledged') ORDER BY status = 'acknowledged', severity = 'warning', opened_at DESC")
+      .all() as unknown as AlertRow[];
+    const resolved = this.db
+      .prepare("SELECT * FROM alerts WHERE status = 'resolved' AND opened_at IS NOT NULL ORDER BY resolved_at DESC LIMIT ?")
+      .all(resolvedLimit) as unknown as AlertRow[];
+    return { active, resolved };
+  }
+
+  /** Open (not yet acknowledged) alerts, per site id ("" for fleet-wide ones). */
+  openAlertCounts(): Map<string, number> {
+    const rows = this.db
+      .prepare("SELECT site_id, COUNT(*) AS n FROM alerts WHERE status = 'open' GROUP BY site_id")
+      .all() as Array<{ site_id: string | null; n: number }>;
+    return new Map(rows.map((r) => [r.site_id ?? '', r.n]));
+  }
+
+  deleteAlertsForSite(siteId: string): void {
+    this.db.prepare('DELETE FROM alerts WHERE site_id = ?').run(siteId);
+  }
+
+  /** Drops alerts of sites that no longer exist (e.g. removed via the CLI). */
+  deleteAlertsOfUnknownSites(knownSiteIds: string[]): void {
+    for (const alert of this.activeAlerts()) {
+      if (alert.site_id !== null && !knownSiteIds.includes(alert.site_id)) this.deleteAlert(alert.id);
+    }
+  }
+
+  pruneAlerts(resolvedBefore: string): void {
+    this.db.prepare("DELETE FROM alerts WHERE status = 'resolved' AND resolved_at < ?").run(resolvedBefore);
   }
 
   // --- audit ---

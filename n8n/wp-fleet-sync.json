@@ -57,7 +57,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// n8n-expressies mogen het woord `arguments` niet gebruiken, dus de complete\n// JSON-RPC-body voor de MCP wordt hier (in de Code-node) opgebouwd.\nconst call = (tool, args = {}) => ({\n  json: { kind: tool, body: { jsonrpc: '2.0', id: tool, method: 'tools/call', params: { name: tool, arguments: args } } },\n});\n\n// Dagelijks: WordPress opnieuw laten zoeken naar updates (refresh), een audit van\n// alle administrator-accounts en WordPress Site Health over de hele vloot.\nreturn [\n  call('fleet_updates_report', { refresh: true }),\n  call('fleet_user_audit', { role: 'administrator' }),\n  call('fleet_site_health'),\n];"
+        "jsCode": "// n8n-expressies mogen het woord `arguments` niet gebruiken, dus de complete\n// JSON-RPC-body voor de MCP wordt hier (in de Code-node) opgebouwd.\nconst call = (tool, args = {}) => ({\n  json: { kind: tool, body: { jsonrpc: '2.0', id: tool, method: 'tools/call', params: { name: tool, arguments: args } } },\n});\n\n// Dagelijks: WordPress opnieuw laten zoeken naar updates (refresh), een audit van\n// alle administrator-accounts, WordPress Site Health en een scan op bekende\n// kwetsbaarheden over de hele vloot.\nreturn [\n  call('fleet_updates_report', { refresh: true }),\n  call('fleet_user_audit', { role: 'administrator' }),\n  call('fleet_site_health'),\n  call('fleet_vulnerabilities'),\n];"
       },
       "id": "a1f0c7a2-0007-4a6e-9a01-000000000007",
       "name": "Tools (dagelijks)",

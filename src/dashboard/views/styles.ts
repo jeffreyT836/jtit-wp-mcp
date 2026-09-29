@@ -87,6 +87,7 @@ h2 { font-size: 1.05rem; margin: 0 0 .75rem; }
 .nav-site { font-size: .92rem; padding: .45rem .75rem; }
 .nav-site-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .nav-count { font-size: .72rem; font-weight: 700; padding: .05rem .45rem; border-radius: 999px; background: rgba(255,181,71,.16); color: #FFB547; }
+.nav-item .nav-count { margin-left: auto; } .nav-count.alert { background: rgba(255,0,94,.2); color: #FF6FA0; }
 .nav-sub { display: grid; margin: .1rem 0 .4rem 1.55rem; padding-left: .75rem; border-left: 1px solid #34342F; }
 .nav-sub a { padding: .3rem .5rem; font-size: .86rem; color: #9C9C94; text-decoration: none; border-radius: 6px; }
 .nav-sub a:hover, .nav-sub a.active { color: var(--cyan); }
@@ -227,6 +228,8 @@ button.secondary:hover, .button.secondary:hover { border-color: var(--accent); c
 button.danger, .button.danger { background: var(--pink); color: #fff; }
 button.danger:hover { box-shadow: 0 6px 20px -6px rgba(255,0,94,.7); }
 button.link { background: none; border: 0; color: var(--accent); padding: 0; }
+button.small, .button.small { padding: .3rem .7rem; font-size: .8rem; }
+tr.muted-row td { opacity: .6; }
 button[disabled] { opacity: .6; cursor: progress; transform: none; box-shadow: none; }
 .icon-btn:hover { transform: none; box-shadow: none; }
 form.inline { display: inline-flex; flex-wrap: wrap; gap: .6rem; align-items: center; margin: 0; }

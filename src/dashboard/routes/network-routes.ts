@@ -8,6 +8,7 @@ import { bridgeErrorMessage, HEALTH_KIND, healthSnapshotPayload } from '../healt
 import { userErrorMessage } from '../users.js';
 import { networkPage, networkSitePage } from '../views/network-views.js';
 import { clientFor, renderSiteDetail } from './site-routes.js';
+import { evaluateAndNotify } from './alert-routes.js';
 
 const BLOG_ID = /^[1-9][0-9]{0,9}$/;
 
@@ -72,6 +73,7 @@ export function networkRoutes(ctx: RouteContext): Router {
       ok = false;
       db.insertSnapshot(site.id, HEALTH_KIND, healthSnapshotPayload(site.id, { error: bridgeErrorMessage(err) }), new Date().toISOString());
     }
+    await evaluateAndNotify(ctx, HEALTH_KIND, [site.id]);
     db.audit(res.locals.auth!.user.email, 'site_health_checked', site.id, { ok });
     res.redirect(303, `/sites/${site.id}?health=1#health`);
   });
