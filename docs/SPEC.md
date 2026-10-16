@@ -177,3 +177,20 @@ Responses are JSON. Errors use WP_Error → `{code, message, data:{status}}`.
 
 Plugin header: `Plugin Name: NB MCP Bridge`, `Version: 1.0.0`, `Requires at least: 6.0`,
 `Requires PHP: 7.4`. Single file, no dependencies, installable in `wp-content/mu-plugins/`.
+
+## 6. Dashboard: vulnerabilities and client API
+
+- `src/vuln/feed-parser.ts` streams the Wordfence Intelligence V3 feed (`GET
+  /api/intelligence/v3/vulnerabilities/{production|scanner}`, `Authorization: Bearer
+  WORDFENCE_API_KEY`) and yields one record at a time; the feed is never parsed as a whole.
+- `src/vuln/wordfence.ts` (`WordfenceFeed`) keeps a compact index by `type:slug` (core is always
+  `core:wordpress`), persisted to `VULN_CACHE_FILE`, refreshed at most every
+  `VULN_FEED_REFRESH_HOURS`; failures become a Dutch `error` and back off for an hour.
+- `src/vuln/version.ts`: PHP `version_compare`-style ordering (missing segments = 0) and
+  `inRange` with inclusive flags and `*` as unbounded.
+- `src/vuln/scan.ts` matches installed core/plugins/themes and stores snapshot kind
+  `vulnerabilities` (`{site, ok, data: {scannedAt, items}}`; a failure keeps the previous items).
+  `src/vuln/scheduler.ts` scans every site with a password every `VULN_SCAN_INTERVAL_HOURS`
+  (concurrency 3).
+- Client API v1 (`/client-api/v1`, bearer `DASHBOARD_CLIENT_TOKEN`, GET only): the contract is
+  `docs/CLIENT-API.md`; derivation lives in `src/dashboard/client-api.ts`.

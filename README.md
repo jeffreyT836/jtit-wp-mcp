@@ -231,6 +231,18 @@ naar het doelbestand en de resulterende `sites.db` daarna naar de container kopi
 | `FLEET_CONCURRENCY` | `4` | Max. gelijktijdige sites in fleet-tools |
 | `AUDIT_LOG_FILE` | — | Optioneel pad naar JSONL audit-bestand — moet in Docker naar een writable volume wijzen (zie `docker-compose.yml`'s `wp-fleet-logs` volume op `/app/logs`, of `-v wp-fleet-logs:/app/logs` bij een losse `docker run`), anders faalt het schrijven op de read-only rootfs |
 
+Alleen voor het dashboard (`dist/dashboard/index.js`):
+
+| Var | Standaard | Betekenis |
+|---|---|---|
+| `DASHBOARD_INGEST_TOKEN` | — | **Verplicht**, min. 32 tekens; bearer voor n8n op `/api/ingest` |
+| `DASHBOARD_CLIENT_TOKEN` | — | Min. 32 tekens; alleen-lezen bearer voor de client-API (`/client-api/v1`, zie §10.1). Leeg → de client-API antwoordt `503` |
+| `WORDFENCE_API_KEY` | — | Sleutel voor Wordfence Intelligence (zie §10.2). Leeg → kwetsbaarhedenscan uit |
+| `WORDFENCE_FEED` | `production` | Welke Wordfence-feed: `production` of `scanner` |
+| `VULN_FEED_REFRESH_HOURS` | `12` | Feed hooguit zo vaak opnieuw downloaden |
+| `VULN_SCAN_INTERVAL_HOURS` | `6` | Elke site zo vaak scannen (eerste run ±30 s na de start) |
+| `VULN_CACHE_FILE` | `wordfence-index.json` naast `DASHBOARD_DB` | Compacte index van de feed, zodat een herstart niet opnieuw downloadt |
+
 ### 4.3 Secrets
 
 Elk Application Password ligt AES-256-GCM versleuteld in de SQLite-store, met de site-id als
@@ -268,7 +280,9 @@ De server draait achter **Traefik** en is bereikbaar op `https://wp-mcp.jtit.nl/
 
 **Vereisten om te deployen:**
 
-- Een GitHub-**environment** genaamd `Hostinger` met secrets `SSH_HOST`, `SSH_USER`, `SSH_KEY`.
+- Een GitHub-**environment** genaamd `Hostinger` met secrets `SSH_HOST`, `SSH_USER`, `SSH_KEY`,
+  `ADMIN_EMAIL`, `ADMIN_PASSWORD` en optioneel `WORDFENCE_API_KEY` (zonder dat secret blijft de
+  kwetsbaarhedenscan uit; met het secret zet elke deploy de actuele waarde in `.env`).
 - Een DNS A-record `wp-mcp.jtit.nl` → het VPS-IP.
 - Een extern `traefik-network` Docker-netwerk op de server (de deploy faalt expliciet als dat
   ontbreekt).
@@ -476,6 +490,49 @@ Per site:
   worden verwijderd. Rollen komen via de bridge (inclusief maatwerkrollen zoals
   `shop_manager`), zonder bridge de standaardrollen. Op sites met "alleen lezen" is alleen de
   lijst beschikbaar.
+
+- **Kwetsbaarheden** — elke site wordt elke 6 uur (en met "Nu controleren") vergeleken met de
+  Wordfence Intelligence-feed: core-, plugin- en thema-versies tegen bekende kwetsbaarheden, met
+  CVE, CVSS-score en fix-advies. Zie §10.2.
+
+### 10.1 Client-API (macOS-app WP Fleet Bar)
+
+Alleen-lezen JSON op `https://wp-dashboard.jtit.nl/client-api/v1` (`GET /fleet` en
+`GET /sites/<id>`), met `Authorization: Bearer <DASHBOARD_CLIENT_TOKEN>`. Het contract staat in
+[`docs/CLIENT-API.md`](docs/CLIENT-API.md). De token is alleen-lezen en staat los van
+`DASHBOARD_INGEST_TOKEN`; geen cookies, geen CSRF. De bestaande Traefik-router van het dashboard
+routeert `/client-api` al publiek (alleen `/api` en `/healthz` zijn uitgesloten), dus er is geen
+extra host of DNS-record nodig.
+
+De eerste deploy na deze versie maakt `DASHBOARD_CLIENT_TOKEN` aan in de server-`.env`. Zo lees
+je hem uit (en vul je hem in de macOS-app in, bij de instellingen van WP Fleet Bar):
+
+```bash
+ssh <gebruiker>@<vps>
+grep '^DASHBOARD_CLIENT_TOKEN=' /docker/jtit-wp-mcp/.env | cut -d= -f2-
+```
+
+Zet hem ook in je password manager. Roteren: verwijder de regel uit `.env`, deploy opnieuw (er
+wordt een nieuwe gegenereerd) en vul de nieuwe waarde in de app in.
+
+### 10.2 Kwetsbaarheden (Wordfence Intelligence)
+
+Het dashboard downloadt de Wordfence Intelligence V3-feed (hooguit elke 12 uur; de feed is groot
+en wordt record voor record gestreamd), bewaart er een compacte index van naast de database, en
+scant elke site met een Application Password: WordPress-versie (via de bridge, anders de laatste
+`fleet_health`), plugins en thema's. Treffers verschijnen in het paneel "Kwetsbaarheden" op de
+sitepagina, als teller in de zijbalk en het overzicht, en in de client-API. Informatieve
+Wordfence-records worden niet getoond. Kritiek = CVSS ≥ 7,0 of rating High/Critical.
+
+Een API-sleutel aanvragen:
+
+1. Maak een account aan op [wordfence.com](https://www.wordfence.com) en log in.
+2. Ga naar **Integrations** → **API key** en maak een sleutel aan.
+3. Zet hem als secret `WORDFENCE_API_KEY` in de GitHub-environment `Hostinger` en deploy
+   opnieuw (lokaal: `WORDFENCE_API_KEY=...` in `.env`).
+
+Bij weergave van de gegevens hoort de bronvermelding "Data: Wordfence Intelligence (Defiant
+Inc.) — CVE © The MITRE Corporation"; het dashboard toont die onder elke lijst.
 
 Belangrijk: de encryptie beschermt tegen het lekken van de database of een backup, niet tegen
 een gecompromitteerde VPS zelf (die kan de sleutel uit een draaiend proces lezen). Blijf dus

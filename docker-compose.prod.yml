@@ -1,11 +1,14 @@
 # Productie-stack. De deploy-workflow kopieert dit bestand naar /docker/jtit-wp-mcp op de
 # server en hernoemt het daar naar docker-compose.yml. De .env in diezelfde map wordt bij de
-# eerste deploy gegenereerd (MCP_HTTP_TOKEN, SITES_ENCRYPTION_KEY, DASHBOARD_INGEST_TOKEN);
-# bestaande waarden worden nooit overschreven.
+# eerste deploy gegenereerd (MCP_HTTP_TOKEN, SITES_ENCRYPTION_KEY, DASHBOARD_INGEST_TOKEN,
+# DASHBOARD_CLIENT_TOKEN); bestaande waarden worden nooit overschreven. WORDFENCE_API_KEY komt uit
+# het GitHub-secret van die naam (als dat gezet is).
 #
 # - wp-mcp        https://wp-mcp.jtit.nl/mcp (bearer token), intern http://wp-mcp:3000/mcp
 # - wp-dashboard  https://wp-dashboard.jtit.nl (login + TOTP); /api alleen intern:
 #                 http://wp-dashboard:3001/api/ingest (bearer DASHBOARD_INGEST_TOKEN)
+#                 https://wp-dashboard.jtit.nl/client-api/v1 publiek (bearer DASHBOARD_CLIENT_TOKEN,
+#                 alleen-lezen JSON voor de macOS-app WP Fleet Bar)
 # n8n bereikt beide via het gedeelde Docker-netwerk traefik-network.
 #
 # Sites beheer je in het dashboard. Noodroute via de CLI (op de server, in deze map):
@@ -82,7 +85,9 @@ services:
       start_period: 10s
     labels:
       - 'traefik.enable=true'
-      # /api (n8n-ingest) en /healthz worden niet publiek gerouteerd.
+      # /api (n8n-ingest) en /healthz worden niet publiek gerouteerd. /client-api/v1 (macOS-app)
+      # valt bewust wél onder deze router: PathPrefix(`/api`) matcht /client-api niet, dus geen
+      # aparte router of host nodig. Die API eist zelf een bearer token (DASHBOARD_CLIENT_TOKEN).
       - 'traefik.http.routers.wp-dashboard.rule=Host(`wp-dashboard.jtit.nl`) && !PathPrefix(`/api`) && !Path(`/healthz`)'
       - 'traefik.http.routers.wp-dashboard.entrypoints=websecure'
       - 'traefik.http.routers.wp-dashboard.tls.certresolver=letsencrypt'

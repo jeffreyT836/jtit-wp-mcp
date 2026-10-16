@@ -70,7 +70,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: build-and-push
     # SSH_HOST, SSH_USER, SSH_KEY, ADMIN_EMAIL en ADMIN_PASSWORD staan als secrets in
-    # deze GitHub-environment.
+    # deze GitHub-environment; WORDFENCE_API_KEY is optioneel.
     environment: Hostinger
     permissions:
       contents: read
@@ -97,12 +97,14 @@ jobs:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
           ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+          # Optioneel: zonder dit secret blijft de kwetsbaarhedenscan uit.
+          WORDFENCE_API_KEY: ${{ secrets.WORDFENCE_API_KEY }}
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
           command_timeout: 15m
-          envs: GHCR_USER,GHCR_TOKEN,ADMIN_EMAIL,ADMIN_PASSWORD
+          envs: GHCR_USER,GHCR_TOKEN,ADMIN_EMAIL,ADMIN_PASSWORD,WORDFENCE_API_KEY
           script: |
             set -eo pipefail
 
@@ -135,6 +137,17 @@ jobs:
             add_secret SITES_ENCRYPTION_KEY "$(openssl rand -base64 32)"
             add_secret DASHBOARD_INGEST_TOKEN "$(openssl rand -hex 32)"
             add_secret MCP_READ_ONLY false
+            add_secret DASHBOARD_CLIENT_TOKEN "$(openssl rand -hex 32)"
+
+            # Wordfence-sleutel uit GitHub: alleen als het secret gezet is, en dan altijd de
+            # actuele waarde (zo werkt roteren). De waarde wordt nooit gelogd.
+            if [ -n "$WORDFENCE_API_KEY" ]; then
+              grep -v '^WORDFENCE_API_KEY=' .env > .env.tmp || true
+              printf 'WORDFENCE_API_KEY=%s\n' "$WORDFENCE_API_KEY" >> .env.tmp
+              mv -f .env.tmp .env
+              chmod 600 .env
+            fi
+            unset WORDFENCE_API_KEY
 
             printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
             unset GHCR_TOKEN
