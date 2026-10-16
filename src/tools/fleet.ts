@@ -1,71 +1,17 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { ResolvedSite } from '../config/schema.js';
-import { WpError, sanitizeMessage } from '../wp/errors.js';
 import type { WpClient } from '../wp/client.js';
 import type { ToolContext } from './context.js';
 import { errorResult, jsonResult, requireWritable, runFleet, selectSites } from './helpers.js';
 import { fetchPlugins, validatePluginId } from './plugins.js';
 import { fetchBridgeUpdates, stripPhp } from './updates.js';
-import { fetchSiteHealth } from '../wp/site-health.js';
+import { fleetHealthReport, fleetSiteHealthReport, fleetUpdatesReport } from './fleet-reports.js';
 
 const siteFilterSchema = {
   sites: z.array(z.string()).optional().describe('Restrict to these site ids (default: every available site)'),
   tags: z.array(z.string()).optional().describe('Restrict to sites carrying all of these tags'),
 };
-
-interface WpUserMe {
-  id: number;
-  username?: string;
-  slug?: string;
-  roles?: string[];
-}
-
-interface BridgeStatusInfo {
-  bridge_version?: string;
-  wp_version?: string;
-  php_version?: string;
-}
-
-type BridgeState = 'ok' | 'missing' | 'error' | 'disabled';
-
-interface FleetHealth {
-  ok: boolean;
-  user?: { id: number; username: string };
-  roles: string[];
-  bridge: BridgeState;
-  versions?: BridgeStatusInfo;
-  error?: string;
-}
-
-async function fleetHealthForSite(client: WpClient, site: ResolvedSite): Promise<FleetHealth> {
-  let ok = false;
-  let user: { id: number; username: string } | undefined;
-  let roles: string[] = [];
-  let error: string | undefined;
-
-  try {
-    const me = await client.request<WpUserMe>('/wp/v2/users/me', { query: { context: 'edit' } });
-    ok = true;
-    roles = me.roles ?? [];
-    user = { id: me.id, username: me.username ?? me.slug ?? '' };
-  } catch (err) {
-    error = err instanceof WpError ? err.message : sanitizeMessage(err instanceof Error ? err.message : String(err));
-  }
-
-  let bridge: BridgeState = 'disabled';
-  let versions: BridgeStatusInfo | undefined;
-  if (site.bridge !== false) {
-    try {
-      versions = await client.bridge<BridgeStatusInfo>('/status');
-      bridge = 'ok';
-    } catch (err) {
-      bridge = err instanceof WpError && err.code === 'nb_mcp_bridge_missing' ? 'missing' : 'error';
-    }
-  }
-
-  return { ok, user, roles, bridge, ...(versions ? { versions } : {}), ...(error ? { error } : {}) };
-}
 
 interface WpUser {
   id: number;
@@ -92,6 +38,7 @@ async function fetchUsersForAudit(client: WpClient, role: string, email?: string
 
 /** Registers `fleet_health`, `fleet_updates_report`, `fleet_find_plugin`, `fleet_user_audit`, `fleet_update_plugin`. See SPEC.md §4. */
 export function register(server: McpServer, ctx: ToolContext): void {
+  const clientOf = (site: ResolvedSite) => ctx.registry.client(site.id);
   server.registerTool(
     'fleet_health',
     {
@@ -103,19 +50,8 @@ export function register(server: McpServer, ctx: ToolContext): void {
     },
     async ({ sites, tags }) => {
       try {
-        const { selected: targets, skipped } = selectSites(ctx.registry, { sites, tags });
-        const results = await runFleet(
-          targets,
-          (site) => fleetHealthForSite(ctx.registry.client(site.id), site),
-          ctx.env.FLEET_CONCURRENCY,
-        );
-        const summary = {
-          sites: results.length,
-          ok: results.filter((r) => r.ok && r.data?.ok).length,
-          failed: results.filter((r) => !r.ok || !r.data?.ok).length,
-          skipped: skipped.length,
-        };
-        return jsonResult({ summary, results, skipped });
+        const { selected, skipped } = selectSites(ctx.registry, { sites, tags });
+        return jsonResult(await fleetHealthReport(selected, skipped, clientOf, ctx.env.FLEET_CONCURRENCY));
       } catch (err) {
         return errorResult(err);
       }
@@ -136,30 +72,8 @@ export function register(server: McpServer, ctx: ToolContext): void {
     },
     async ({ sites, tags, refresh }) => {
       try {
-        const { selected: targets, skipped } = selectSites(ctx.registry, { sites, tags });
-        const results = await runFleet(
-          targets,
-          (site) => fetchBridgeUpdates(ctx.registry.client(site.id), refresh),
-          ctx.env.FLEET_CONCURRENCY,
-        );
-        const summary = results.reduce(
-          (acc, r) => {
-            if (!r.ok || !r.data) {
-              acc.failed += 1;
-              return acc;
-            }
-            acc.pendingPlugins += r.data.plugins?.length ?? 0;
-            acc.pendingThemes += r.data.themes?.length ?? 0;
-            acc.pendingCore += (r.data.core ?? []).filter((c) => c.response === 'upgrade').length;
-            return acc;
-          },
-          { failed: 0, pendingPlugins: 0, pendingThemes: 0, pendingCore: 0 },
-        );
-        return jsonResult({
-          summary: { sites: results.length, ...summary, skipped: skipped.length },
-          results,
-          skipped,
-        });
+        const { selected, skipped } = selectSites(ctx.registry, { sites, tags });
+        return jsonResult(await fleetUpdatesReport(selected, skipped, clientOf, ctx.env.FLEET_CONCURRENCY, refresh));
       } catch (err) {
         return errorResult(err);
       }
@@ -178,24 +92,7 @@ export function register(server: McpServer, ctx: ToolContext): void {
     async ({ sites, tags }) => {
       try {
         const { selected, skipped } = selectSites(ctx.registry, { sites, tags });
-        const targets = selected.filter((site) => site.bridge !== false);
-        const results = await runFleet(
-          targets,
-          (site) => fetchSiteHealth(ctx.registry.client(site.id)),
-          ctx.env.FLEET_CONCURRENCY,
-        );
-        const summary = results.reduce(
-          (acc, r) => {
-            if (!r.ok || !r.data) acc.failed += 1;
-            else {
-              acc.critical += r.data.summary.critical;
-              acc.recommended += r.data.summary.recommended;
-            }
-            return acc;
-          },
-          { sites: results.length, critical: 0, recommended: 0, failed: 0, skipped: skipped.length + selected.length - targets.length },
-        );
-        return jsonResult({ summary, results, skipped });
+        return jsonResult(await fleetSiteHealthReport(selected, skipped, clientOf, ctx.env.FLEET_CONCURRENCY));
       } catch (err) {
         return errorResult(err);
       }

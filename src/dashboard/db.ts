@@ -236,6 +236,14 @@ export class DashboardDb {
     return (siteId === undefined ? stmt.all() : stmt.all(siteId)) as unknown as SnapshotRow[];
   }
 
+  /** Newest `collected_at` of a fleet-wide (site_id NULL) snapshot of this kind. */
+  latestFleetCollectedAt(kind: string): string | undefined {
+    const row = this.db
+      .prepare('SELECT MAX(collected_at) AS ts FROM snapshots WHERE site_id IS NULL AND kind = ?')
+      .get(kind) as { ts: string | null };
+    return row.ts ?? undefined;
+  }
+
   lastSnapshotReceivedAt(): string | undefined {
     const row = this.db.prepare('SELECT MAX(received_at) AS ts FROM snapshots').get() as { ts: string | null };
     return row.ts ?? undefined;

@@ -51,7 +51,7 @@ export function overviewPage(rows: { site: StoredSite; status: SiteStatus }[]) {
   const problems = rows.filter((r) => !r.site.hasPassword || r.status.reachable === false || r.status.updatesError).length;
   const latest = rows.map((r) => r.status.collectedAt).filter(Boolean).sort().at(-1);
   return html`
-${pageHead('Overzicht', { eyebrow: 'Fleet', sub: `Laatste data van n8n: ${fmtDate(latest)}`, actions: addButton })}
+${pageHead('Overzicht', { eyebrow: 'Fleet', sub: `Laatste gegevens: ${fmtDate(latest)}`, actions: addButton })}
 <div class="tiles">
   ${tile('Sites', rows.length)}
   ${tile('Bereikbaar', reachable, { sub: `van ${rows.length}`, gaugePct: (reachable / rows.length) * 100 })}
@@ -195,7 +195,7 @@ function hero(csrf: string, site: StoredSite, status: SiteStatus): SafeHtml {
     <span class="chip"><small>Laatste data</small><b>${fmtDate(status.collectedAt)}</b></span>
   </div>
   ${status.reachable === false && status.error
-    ? alert('error', html`Laatste controle door n8n mislukt: ${status.error} <small>(wordt bij de volgende n8n-run opnieuw gecontroleerd; "Verbinding testen" controleert nu)</small>`)
+    ? alert('error', html`Laatste automatische controle mislukt: ${status.error} <small>(wordt bij de volgende controle opnieuw geprobeerd; "Verbinding testen" controleert nu)</small>`)
     : null}
   <div class="actions">
     <a class="button" href="/sites/${site.id}/edit">${icon('edit')} Bewerken</a>
@@ -239,7 +239,7 @@ ${panel({
   </dl>`,
 })}
 ${panel({
-  id: 'n8n', title: 'Laatste data van n8n', icon: 'activity', meta: snapshots.length ? `${snapshots.length} rapport(en)` : null,
+  id: 'n8n', title: 'Laatste gegevens', icon: 'activity', meta: snapshots.length ? `${snapshots.length} rapport(en)` : null,
   body: snapshots.length === 0
     ? html`<div class="empty">${icon('activity')}<span>Nog geen data ontvangen voor deze site.</span></div>`
     : snapshots.map(
@@ -282,7 +282,7 @@ ${pageHead('Instellingen', { eyebrow: 'Beheer' })}
   <dl class="meta">
     <dt>Account</dt><dd>${opts.email}</dd>
     <dt>Tweestapsverificatie</dt><dd><span class="badge ok">${statusDot('ok')} actief</span></dd>
-    <dt>Laatste data van n8n</dt><dd>${fmtDate(opts.ingestLastSeen)}</dd>
+    <dt>Laatste gegevens ontvangen</dt><dd>${fmtDate(opts.ingestLastSeen)}</dd>
   </dl>
 </section>
 <section class="card">

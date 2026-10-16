@@ -236,6 +236,9 @@ Alleen voor het dashboard (`dist/dashboard/index.js`):
 | Var | Standaard | Betekenis |
 |---|---|---|
 | `DASHBOARD_INGEST_TOKEN` | — | **Verplicht**, min. 32 tekens; bearer voor n8n op `/api/ingest` |
+| `DASHBOARD_SYNC_ENABLED` | `true` | Ingebouwde sync (zie §10): `false` zet hem uit, dan komt de data alleen nog via n8n |
+| `SYNC_HEALTH_INTERVAL_MINUTES` | `60` | Hoe vaak `fleet_health` (bereikbaarheid, admin, bridge, versies) per site wordt opgehaald |
+| `SYNC_UPDATES_INTERVAL_HOURS` | `6` | Hoe vaak updates (met refresh) en Site Health per site worden opgehaald |
 | `DASHBOARD_CLIENT_TOKEN` | — | Min. 32 tekens; alleen-lezen bearer voor de client-API (`/client-api/v1`, zie §10.1). Leeg → de client-API antwoordt `503` |
 | `WORDFENCE_API_KEY` | — | Sleutel voor Wordfence Intelligence (zie §10.2). Leeg → kwetsbaarhedenscan uit |
 | `WORDFENCE_FEED` | `production` | Welke Wordfence-feed: `production` of `scanner` |
@@ -472,11 +475,12 @@ wijziging komt in het audit-log.
 
 Per site:
 
-- **Status en updates** — data van n8n (`/api/ingest`), plus live controleren en plugins,
+- **Status en updates** — verzameld door de ingebouwde sync (zie hieronder) of n8n
+  (`/api/ingest`), plus live controleren en plugins,
   thema's, core en vertalingen bijwerken, optioneel veilig (backup, controle, automatisch
   terugzetten; vereist nb-mcp-bridge 1.1.0).
 - **Site Health** — alle WordPress Site Health-tests (kritiek / aanbevolen / geslaagd, met uitleg)
-  plus een beperkte selectie uit het Info-tabblad; dagelijks via n8n (`fleet_site_health`) of live
+  plus een beperkte selectie uit het Info-tabblad; elke 6 uur via de sync (`fleet_site_health`) of live
   met "Opnieuw controleren". Vereist nb-mcp-bridge 1.2.0.
 - **Multisite** (`/sites/<id>/network`) — bij een multisite verschijnt een extra menu-item met alle
   sites in het netwerk; per subsite een overzicht (thema, actieve plugins, aantallen) en
@@ -494,6 +498,22 @@ Per site:
 - **Kwetsbaarheden** — elke site wordt elke 6 uur (en met "Nu controleren") vergeleken met de
   Wordfence Intelligence-feed: core-, plugin- en thema-versies tegen bekende kwetsbaarheden, met
   CVE, CVSS-score en fix-advies. Zie §10.2.
+
+**Ingebouwde sync (n8n is optioneel).** Het dashboard haalt de gegevens zelf op bij elke site
+met een Application Password, in precies dezelfde vorm als n8n ze via `/api/ingest` aanlevert:
+
+| Wanneer | Wat | Snapshot-`kind` |
+|---|---|---|
+| Elk uur (`SYNC_HEALTH_INTERVAL_MINUTES`) | bereikbaar, admin-rechten, bridge, WP-/PHP-versie | `fleet_health` |
+| Elke 6 uur (`SYNC_UPDATES_INTERVAL_HOURS`) | openstaande updates, met refresh | `fleet_updates_report` |
+| Elke 6 uur | WordPress Site Health incl. mapgroottes (bridge 1.2.0) | `fleet_site_health` |
+
+Ongeveer 30 seconden na de start draait alleen wat verouderd is: een herstart of deploy belast de
+sites dus niet opnieuw. Er worden maximaal 3 sites tegelijk benaderd; een fout bij één site
+stopt de rest niet. Per run komt één regel in de log (`docker logs wp-dashboard`), bijv.
+`sync fleet_health: 12 site(s), 1 failed, 0 skipped`, zonder wachtwoorden of tokens. Draait n8n
+ook nog, dan telt een n8n-run mee: de sync slaat dan over wat n8n net heeft opgehaald. Uitzetten
+kan met `DASHBOARD_SYNC_ENABLED=false`.
 
 ### 10.1 Client-API (macOS-app WP Fleet Bar)
 

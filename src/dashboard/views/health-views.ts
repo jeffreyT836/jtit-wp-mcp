@@ -84,7 +84,7 @@ export function healthSection(opts: { csrf: string; site: StoredSite; snapshot?:
   }
   const toolbar = (text: string) => html`<div class="toolbar"><p class="hint">${text}</p>${refreshForm(csrf, site.id)}</div>`;
   if (!snapshot) {
-    return section(html`${toolbar('')}<div class="empty">${icon('shield')}<span>Nog geen Site Health-gegevens. Klik op "Opnieuw controleren" of wacht op de dagelijkse n8n-run.</span></div>`);
+    return section(html`${toolbar('')}<div class="empty">${icon('shield')}<span>Nog geen Site Health-gegevens. Klik op "Opnieuw controleren" of wacht op de automatische controle.</span></div>`);
   }
   if (snapshot.error || !snapshot.data) {
     return section(html`${toolbar('')}${alert('error', `Site Health mislukt (${fmtDate(snapshot.collectedAt)}): ${snapshot.error}`)}`, html`<span class="badge error">fout</span>`);

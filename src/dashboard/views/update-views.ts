@@ -77,7 +77,7 @@ export function updatesSection(opts: { csrf: string; site: StoredSite; snapshot?
   }
   const toolbar = (text: string | SafeHtml) => html`<div class="toolbar"><p class="hint">${text}</p>${refreshForm(csrf, site.id)}</div>`;
   if (!snapshot) {
-    return section(html`${toolbar('')}<div class="empty">${icon('download')}<span>Nog geen update-gegevens. Klik op "Opnieuw controleren" of wacht op de volgende n8n-run.</span></div>`);
+    return section(html`${toolbar('')}<div class="empty">${icon('download')}<span>Nog geen update-gegevens. Klik op "Opnieuw controleren" of wacht op de automatische controle.</span></div>`);
   }
   if (snapshot.error || !snapshot.data) {
     return section(html`${toolbar('')}${alert('error', `Update-check mislukt (${fmtDate(snapshot.collectedAt)}): ${snapshot.error}`)}`,

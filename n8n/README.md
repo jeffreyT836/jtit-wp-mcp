@@ -3,6 +3,13 @@
 `wp-fleet-sync.json` haalt data op bij de MCP-server en levert die aan het dashboard, dat ze
 toont op https://wp-dashboard.jtit.nl.
 
+> **Optioneel sinds de ingebouwde sync.** Het dashboard haalt `fleet_health` (elk uur),
+> `fleet_updates_report` met refresh en `fleet_site_health` (elke 6 uur) nu zelf op, in precies
+> dezelfde vorm (zie README §10). Deze workflow is daarvoor niet meer nodig. Alleen
+> `fleet_user_audit` (de lijst admin-accounts) komt nog uitsluitend via n8n; die data staat
+> onder "Laatste gegevens" op de sitepagina. Laat je de workflow aan, dan slaat de sync over wat
+> n8n net heeft opgehaald, dus sites worden niet dubbel belast.
+
 | Wanneer | MCP-tool | Wat je ziet in het dashboard |
 |---|---|---|
 | Elk uur | `fleet_health` | bereikbaar, admin-rechten, bridge, WP-/PHP-versie |

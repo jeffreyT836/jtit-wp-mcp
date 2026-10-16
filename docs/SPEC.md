@@ -194,3 +194,15 @@ Plugin header: `Plugin Name: NB MCP Bridge`, `Version: 1.0.0`, `Requires at leas
   (concurrency 3).
 - Client API v1 (`/client-api/v1`, bearer `DASHBOARD_CLIENT_TOKEN`, GET only): the contract is
   `docs/CLIENT-API.md`; derivation lives in `src/dashboard/client-api.ts`.
+
+## 7. Dashboard: built-in sync
+
+`src/dashboard/sync.ts` makes n8n optional. Every `SYNC_HEALTH_INTERVAL_MINUTES` (default 60) it
+runs `fleet_health`, and every `SYNC_UPDATES_INTERVAL_HOURS` (default 6) it runs
+`fleet_updates_report` (refresh) and `fleet_site_health` (with directory sizes), over every
+available site with concurrency 3. The reports come from `src/tools/fleet-reports.ts`, shared
+with the MCP fleet tools, and are stored with `storeIngest`, so the rows are identical to an n8n
+ingest: one per-site row `{site, ok, data | error}` per result plus a fleet-wide row
+(`site_id` NULL). A task only runs when the newest fleet-wide row of its kind is older than its
+interval (minus a small grace), so restarts and concurrent n8n runs do not double the load.
+`DASHBOARD_SYNC_ENABLED=false` disables it.

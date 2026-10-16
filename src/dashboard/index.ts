@@ -1,5 +1,5 @@
 import { dirname, join } from 'node:path';
-import { dashboardEnvSchema } from '../config/schema.js';
+import { dashboardEnvSchema, type ResolvedSite } from '../config/schema.js';
 import { parseEncryptionKey } from '../store/crypto.js';
 import { resolveSitesDbPath, SiteStore } from '../store/site-store.js';
 import { deriveTotpKey } from './auth/totp.js';
@@ -9,6 +9,7 @@ import { DashboardDb, resolveDashboardDbPath } from './db.js';
 import { SNAPSHOT_RETENTION_DAYS } from './snapshots.js';
 import { WpClient } from '../wp/client.js';
 import { startVulnerabilityScheduler } from '../vuln/scheduler.js';
+import { startSyncScheduler } from './sync.js';
 import { WordfenceFeed } from '../vuln/wordfence.js';
 
 const CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
@@ -43,9 +44,18 @@ function main(): void {
   });
   vulnFeed.loadCache();
   const app = createDashboardApp({ db, store, env, totpKey: deriveTotpKey(masterKey), vulnFeed });
+  const clientFor = (site: ResolvedSite) => new WpClient(site, { defaultTimeoutMs: env.WP_TIMEOUT_MS });
+  if (env.DASHBOARD_SYNC_ENABLED) {
+    startSyncScheduler(
+      { db, store, clientFor },
+      { healthIntervalMs: env.SYNC_HEALTH_INTERVAL_MINUTES * 60_000, updatesIntervalMs: env.SYNC_UPDATES_INTERVAL_HOURS * 3_600_000 },
+    );
+  } else {
+    process.stderr.write('[wp-dashboard] DASHBOARD_SYNC_ENABLED=false; built-in sync disabled (n8n only)\n');
+  }
   if (vulnFeed.enabled) {
     startVulnerabilityScheduler(
-      { db, store, feed: vulnFeed, clientFor: (site) => new WpClient(site, { defaultTimeoutMs: env.WP_TIMEOUT_MS }) },
+      { db, store, feed: vulnFeed, clientFor },
       env.VULN_SCAN_INTERVAL_HOURS,
     );
   } else {

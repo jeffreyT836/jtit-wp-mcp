@@ -101,6 +101,13 @@ export const dashboardEnvSchema = z.object({
     .transform((v) => v !== 'false'),
   WP_TIMEOUT_MS: z.coerce.number().int().positive().default(30000),
   WP_UPDATE_TIMEOUT_MS: z.coerce.number().int().positive().default(300000),
+  /** Built-in sync of fleet_health / updates / Site Health (n8n optional). "false" disables it. */
+  DASHBOARD_SYNC_ENABLED: z
+    .string()
+    .optional()
+    .transform((v) => v?.trim().toLowerCase() !== 'false'),
+  SYNC_HEALTH_INTERVAL_MINUTES: z.coerce.number().positive().default(60),
+  SYNC_UPDATES_INTERVAL_HOURS: z.coerce.number().positive().default(6),
   /** Read-only bearer token for the client API (`/client-api/v1`); the API answers 503 without it. */
   DASHBOARD_CLIENT_TOKEN: z.preprocess(
     emptyToUndefined,
