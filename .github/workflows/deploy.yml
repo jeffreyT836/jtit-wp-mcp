@@ -142,6 +142,13 @@ jobs:
             # Wordfence-sleutel uit GitHub: alleen als het secret gezet is, en dan altijd de
             # actuele waarde (zo werkt roteren). De waarde wordt nooit gelogd.
             if [ -n "$WORDFENCE_API_KEY" ]; then
+              # Hele waarde controleren (ook op regeleinden): alleen ^[A-Za-z0-9_.-]+$.
+              case "$WORDFENCE_API_KEY" in
+                *[!A-Za-z0-9_.-]*)
+                  echo "::error::WORDFENCE_API_KEY bevat ongeldige tekens (alleen A-Z, a-z, 0-9, _ . - toegestaan)."
+                  exit 1
+                  ;;
+              esac
               grep -v '^WORDFENCE_API_KEY=' .env > .env.tmp || true
               printf 'WORDFENCE_API_KEY=%s\n' "$WORDFENCE_API_KEY" >> .env.tmp
               mv -f .env.tmp .env

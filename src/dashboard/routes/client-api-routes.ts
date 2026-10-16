@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { siteIdSchema } from '../../config/schema.js';
 import { bearer } from '../auth/bearer.js';
 import { buildFleetView, buildSiteView } from '../client-api.js';
 import type { RouteContext } from '../context.js';
@@ -39,7 +40,10 @@ export function clientApiRoutes(ctx: RouteContext): Router {
   router.get('/sites/:id', (req, res) => {
     const site = store.list().find((s) => s.id === req.params.id);
     if (!site) {
-      res.status(404).json({ success: false, error: `unknown site "${req.params.id}"` });
+      // Only echo ids that look like site ids; never reflect arbitrary input.
+      const id = String(req.params.id);
+      const error = siteIdSchema.safeParse(id).success ? `unknown site "${id}"` : 'unknown site';
+      res.status(404).json({ success: false, error });
       return;
     }
     res.json({ success: true, data: buildSiteView(site, db.latestSnapshots(site.id), new Date()) });

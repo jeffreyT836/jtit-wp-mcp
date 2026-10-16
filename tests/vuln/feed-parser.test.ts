@@ -41,6 +41,26 @@ describe('splitTopLevelRecords', () => {
     expect(records.map((r) => JSON.parse(r))).toEqual([[1, { d: 2 }], { g: true }]);
   });
 
+  it.each([1, 7, 64 * 1024])('skips oversized records and reports them (chunk size %i)', async (size) => {
+    const small1 = { id: 'a', s: 'x}' };
+    const small2 = { id: 'c', s: '{"y"' };
+    const big = { id: 'b', pad: 'p'.repeat(500), nested: { s: 'braces } { and "quotes" \\ inside' } };
+    const doc = JSON.stringify({ a: small1, b: big, c: small2 });
+    let skipped = 0;
+    const out: string[] = [];
+    const source = iterate(chunks(doc, size));
+    for await (const r of splitTopLevelRecords(source, { maxRecordChars: 200, onSkipped: () => (skipped += 1) })) out.push(r);
+    expect(out.map((r) => JSON.parse(r))).toEqual([small1, small2]);
+    expect(skipped).toBe(1);
+  });
+
+  it('keeps records exactly at the limit', async () => {
+    const record = JSON.stringify({ id: 'a' });
+    const out: string[] = [];
+    for await (const r of splitTopLevelRecords(iterate(chunks(`{"a":${record}}`, 3)), { maxRecordChars: record.length })) out.push(r);
+    expect(out).toEqual([record]);
+  });
+
   it('accepts an empty feed object', async () => {
     expect(await collect(' {}\n', 1)).toEqual([]);
   });

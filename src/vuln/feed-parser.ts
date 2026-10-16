@@ -21,7 +21,21 @@ const isWhitespace = (c: number): boolean => c === 0x20 || c === 0x0a || c === 0
 
 export class FeedFormatError extends Error {}
 
-export async function* splitTopLevelRecords(source: AsyncIterable<Uint8Array>): AsyncGenerator<string> {
+/**
+ * Upper bound for one record, in decoded characters (≈ bytes for the ASCII-heavy feed). Real
+ * records are a few KiB; anything larger is skipped so a hostile or broken feed cannot grow
+ * memory without bound. Memory per record stays below this plus one chunk.
+ */
+export const MAX_RECORD_CHARS = 8 * 1024 * 1024;
+
+export interface SplitOptions {
+  maxRecordChars?: number;
+  /** Called once per skipped (oversized) record. */
+  onSkipped?: () => void;
+}
+
+export async function* splitTopLevelRecords(source: AsyncIterable<Uint8Array>, options: SplitOptions = {}): AsyncGenerator<string> {
+  const maxChars = options.maxRecordChars ?? MAX_RECORD_CHARS;
   const decoder = new TextDecoder('utf-8');
   let depth = 0;
   let inString = false;
@@ -32,6 +46,10 @@ export async function* splitTopLevelRecords(source: AsyncIterable<Uint8Array>): 
   let expectingValue = false;
   let capturing = false;
   let parts: string[] = [];
+  /** Characters captured so far for the current record (in earlier chunks). */
+  let capturedLength = 0;
+  /** The current record exceeded `maxChars`: keep tracking structure, keep no text. */
+  let oversized = false;
 
   function* scan(text: string): Generator<string> {
     let segStart = capturing ? 0 : -1;
@@ -71,9 +89,15 @@ export async function* splitTopLevelRecords(source: AsyncIterable<Uint8Array>): 
       if (c === CLOSE_OBJ || c === CLOSE_ARR) {
         depth -= 1;
         if (capturing && depth === 1) {
-          parts.push(text.slice(segStart, i + 1));
-          yield parts.join('');
+          const total = capturedLength + (i + 1 - segStart);
+          if (oversized || total > maxChars) options.onSkipped?.();
+          else {
+            parts.push(text.slice(segStart, i + 1));
+            yield parts.join('');
+          }
           parts = [];
+          capturedLength = 0;
+          oversized = false;
           capturing = false;
           segStart = -1;
         } else if (depth === 0) {
@@ -88,7 +112,16 @@ export async function* splitTopLevelRecords(source: AsyncIterable<Uint8Array>): 
         else if (expectingValue && !isWhitespace(c)) expectingValue = false; // number/true/false/null
       }
     }
-    if (capturing && segStart >= 0) parts.push(text.slice(segStart));
+    if (capturing && segStart >= 0 && !oversized) {
+      const tail = text.length - segStart;
+      if (capturedLength + tail > maxChars) {
+        oversized = true;
+        parts = [];
+      } else {
+        parts.push(text.slice(segStart));
+        capturedLength += tail;
+      }
+    }
   }
 
   for await (const chunk of source) {

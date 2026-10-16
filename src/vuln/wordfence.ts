@@ -239,8 +239,10 @@ export class WordfenceFeed {
 
       const index = new Map<string, CompactVuln[]>();
       let records = 0;
+      let skipped = 0;
       try {
-        for await (const text of splitTopLevelRecords(response.body as unknown as AsyncIterable<Uint8Array>)) {
+        const body = response.body as unknown as AsyncIterable<Uint8Array>;
+        for await (const text of splitTopLevelRecords(body, { onSkipped: () => (skipped += 1) })) {
           records += 1;
           for (const entry of compactRecord(JSON.parse(text))) {
             const key = indexKey(entry.type, entry.slug);
@@ -253,6 +255,7 @@ export class WordfenceFeed {
         throw new FeedError(`Wordfence-feed onleesbaar: ${this.redact(err instanceof Error ? err.message : String(err))}`);
       }
 
+      if (skipped > 0) this.log(`wordfence feed: skipped ${skipped} oversized record(s)`);
       this.index = index;
       this.records = records;
       this.updatedAt = new Date(this.now()).toISOString();

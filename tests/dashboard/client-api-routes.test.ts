@@ -47,6 +47,12 @@ describe('client API routes', () => {
     const unknown = await fetch(`${app.base}/client-api/v1/sites/bestaat-niet`, { headers: auth });
     expect(unknown.status).toBe(404);
     expect(await unknown.json()).toEqual({ success: false, error: 'unknown site "bestaat-niet"' });
+    // Ids that are not valid site ids are never echoed back.
+    for (const raw of ['%3Cscript%3Ealert(1)%3C%2Fscript%3E', 'A'.repeat(500), 'Hoofdletters']) {
+      const res = await fetch(`${app.base}/client-api/v1/sites/${raw}`, { headers: auth });
+      expect(res.status).toBe(404);
+      expect(await res.json()).toEqual({ success: false, error: 'unknown site' });
+    }
     const path = await fetch(`${app.base}/client-api/v1/nope`, { headers: auth });
     expect(path.status).toBe(404);
     expect(await path.json()).toEqual({ success: false, error: 'not found' });

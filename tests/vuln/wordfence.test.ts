@@ -142,6 +142,16 @@ describe('WordfenceFeed', () => {
     expect(logs.join('\n')).not.toContain(KEY);
   });
 
+  it('logs a warning when oversized records are skipped', async () => {
+    const logs: string[] = [];
+    const huge = { id: 'huge', software: [], pad: 'x'.repeat(8 * 1024 * 1024 + 10) };
+    const body = JSON.stringify({ ...FEED, huge });
+    const feed = new WordfenceFeed({ apiKey: KEY, fetch: wordfenceFetch({ body, chunkSize: 1024 * 1024 }).fetch, log: (m) => logs.push(m) });
+    expect(await feed.refresh()).toBe(true);
+    expect(feed.status().records).toBe(5);
+    expect(logs).toContain('wordfence feed: skipped 1 oversized record(s)');
+  });
+
   it('reports an unreadable feed', async () => {
     const feed = new WordfenceFeed({ apiKey: KEY, fetch: wordfenceFetch({ body: '{"a": {"b": ' }).fetch, log: silent });
     expect(await feed.refresh()).toBe(false);
