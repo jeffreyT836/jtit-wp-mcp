@@ -5,6 +5,7 @@ import { alert, gauge, pageHead, panel, statusDot } from './components.js';
 import { html, type SafeHtml } from './html.js';
 import { icon } from './icons.js';
 import { healthBadges } from './health-views.js';
+import { vulnBadges } from './vulnerability-views.js';
 
 const fmtDate = (iso?: string | null) =>
   iso ? new Date(iso).toLocaleString('nl-NL', { timeZone: 'Europe/Amsterdam' }) : '—';
@@ -60,7 +61,7 @@ ${pageHead('Overzicht', { eyebrow: 'Fleet', sub: `Laatste data van n8n: ${fmtDat
 ${panel({
   id: 'sites', title: 'Sites', icon: 'globe', meta: String(rows.length), open: true,
   body: html`<div class="table-wrap"><table>
-    <thead><tr><th>Site</th><th>Status</th><th>WordPress</th><th>PHP</th><th>Bridge</th><th>Updates</th><th>Site Health</th><th>Laatste data</th></tr></thead>
+    <thead><tr><th>Site</th><th>Status</th><th>WordPress</th><th>PHP</th><th>Bridge</th><th>Updates</th><th>Kwetsbaarheden</th><th>Site Health</th><th>Laatste data</th></tr></thead>
     <tbody>
       ${rows.map(
         ({ site, status }) => html`<tr>
@@ -73,6 +74,7 @@ ${panel({
           <td class="version">${status.phpVersion ?? '—'}</td>
           <td class="version">${status.bridge ?? '—'}</td>
           <td>${updatesCell(status)}</td>
+          <td>${vulnBadges(status.vulnerabilities)}</td>
           <td>${healthBadges(status.health)}</td>
           <td><small>${fmtDate(status.collectedAt)}</small></td>
         </tr>`,
@@ -188,6 +190,7 @@ function hero(csrf: string, site: StoredSite, status: SiteStatus): SafeHtml {
     <span class="chip"><small>Bridge</small><b>${site.bridge ? (status.bridge ?? '—') : 'uit'}</b></span>
     <span class="chip"><small>Updates</small><b>${status.updates ? String(updates) : '—'}</b></span>
     <span class="chip"><small>Site Health</small>${healthBadges(status.health)}</span>
+    ${status.vulnerabilities ? html`<span class="chip"><small>Kwetsbaarheden</small>${vulnBadges(status.vulnerabilities)}</span>` : null}
     ${status.multisite ? html`<span class="chip"><small>Type</small><b>multisite</b></span>` : null}
     <span class="chip"><small>Laatste data</small><b>${fmtDate(status.collectedAt)}</b></span>
   </div>
@@ -213,12 +216,14 @@ export function siteDetailPage(opts: {
   snapshots: SnapshotRow[];
   updates: SafeHtml;
   health: SafeHtml;
+  vulnerabilities: SafeHtml;
   audit: AuditRow[];
 }) {
-  const { csrf, site, status, snapshots, updates, health, audit } = opts;
+  const { csrf, site, status, snapshots, updates, health, vulnerabilities, audit } = opts;
   return html`
 ${hero(csrf, site, status)}
 ${updates}
+${vulnerabilities}
 ${health}
 ${panel({
   id: 'config', title: 'Configuratie', icon: 'sliders',

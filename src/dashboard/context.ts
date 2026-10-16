@@ -2,6 +2,7 @@ import type { Request, Response } from 'express';
 import type { DashboardEnv } from '../config/schema.js';
 import type { SiteStore } from '../store/site-store.js';
 import type { FetchLike } from '../wp/client.js';
+import type { WordfenceFeed } from '../vuln/wordfence.js';
 import type { SessionManager } from './auth/session.js';
 import type { DashboardDb } from './db.js';
 import { layout, type LayoutOptions } from './views/layout.js';
@@ -14,10 +15,13 @@ export interface DashboardDeps {
   totpKey: Buffer;
   /** Injectable for tests; forwarded to WpClient for connection tests. */
   fetch?: FetchLike;
+  /** Wordfence vulnerability feed; a disabled feed is used when absent. */
+  vulnFeed?: WordfenceFeed;
 }
 
 export interface RouteContext extends DashboardDeps {
   sessions: SessionManager;
+  vulnFeed: WordfenceFeed;
 }
 
 /** Client IP as seen through Traefik (`trust proxy` is set to the first hop). */

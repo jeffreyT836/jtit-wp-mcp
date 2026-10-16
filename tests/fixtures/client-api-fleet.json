@@ -1,0 +1,278 @@
+{
+  "success": true,
+  "data": {
+    "apiVersion": 1,
+    "generatedAt": "2026-10-16T09:40:00.000Z",
+    "vulnerabilityFeed": {
+      "enabled": true,
+      "source": "wordfence-intelligence-v3-production",
+      "updatedAt": "2026-10-16T06:00:00.000Z",
+      "records": 5,
+      "error": null
+    },
+    "summary": {
+      "sites": 3,
+      "ok": 1,
+      "warning": 1,
+      "critical": 1,
+      "unknown": 0,
+      "pendingUpdates": 4,
+      "vulnerabilities": 3,
+      "criticalVulnerabilities": 1
+    },
+    "sites": [
+      {
+        "id": "klant-a",
+        "name": "Klant A",
+        "url": "https://klant-a.nl",
+        "tags": [
+          "klant"
+        ],
+        "hasPassword": true,
+        "multisite": false,
+        "state": "critical",
+        "issues": [
+          {
+            "severity": "critical",
+            "code": "vulnerability",
+            "message": "Contact Form 7 5.8.1: CVE-2024-1234 (CVSS 8.1, High)"
+          },
+          {
+            "severity": "warning",
+            "code": "vulnerability",
+            "message": "WordPress 6.8.2: CVE-2025-0001 (CVSS 6.4, Medium)"
+          },
+          {
+            "severity": "warning",
+            "code": "core-update",
+            "message": "WordPress-update beschikbaar: 6.8.3"
+          },
+          {
+            "severity": "warning",
+            "code": "updates",
+            "message": "2 plugin-updates beschikbaar"
+          }
+        ],
+        "status": {
+          "collectedAt": "2026-10-16T09:00:00.000Z",
+          "reachable": true,
+          "isAdmin": true,
+          "bridge": "1.2.0",
+          "wpVersion": "6.8.2",
+          "phpVersion": "8.3.12",
+          "error": null,
+          "updates": {
+            "core": 1,
+            "plugins": 2,
+            "themes": 0
+          },
+          "updatesError": null,
+          "health": {
+            "critical": 0,
+            "recommended": 2,
+            "good": 18
+          },
+          "healthError": null
+        },
+        "updates": {
+          "checkedAt": "2026-10-16T09:00:00.000Z",
+          "core": [
+            {
+              "current": "6.8.2",
+              "version": "6.8.3",
+              "type": "minor"
+            }
+          ],
+          "plugins": [
+            {
+              "slug": "contact-form-7",
+              "name": "Contact Form 7",
+              "currentVersion": "5.8.1",
+              "newVersion": "6.0.1"
+            },
+            {
+              "slug": "hello",
+              "name": "Hello Dolly",
+              "currentVersion": "1.7.1",
+              "newVersion": "1.7.2"
+            }
+          ],
+          "themes": []
+        },
+        "vulnerabilities": {
+          "scannedAt": "2026-10-16T06:05:00.000Z",
+          "error": null,
+          "items": [
+            {
+              "id": "a1b2c3d4-0000-4000-8000-000000000003",
+              "title": "WordPress Core < 6.8.3 - Stored XSS",
+              "softwareType": "core",
+              "slug": "wordpress",
+              "softwareName": "WordPress",
+              "installedVersion": "6.8.2",
+              "cve": "CVE-2025-0001",
+              "cvssScore": 6.4,
+              "cvssRating": "Medium",
+              "patched": true,
+              "patchedVersions": [
+                "6.8.3"
+              ],
+              "remediation": "Update to version 6.8.3",
+              "reference": "https://example.org/core",
+              "published": "2025-10-01 00:00:00"
+            },
+            {
+              "id": "848ccbdc-c6f1-480f-a272-cd459e706713",
+              "title": "Contact Form 7 <= 5.8.1 - Reflected Cross-Site Scripting",
+              "softwareType": "plugin",
+              "slug": "contact-form-7",
+              "softwareName": "Contact Form 7",
+              "installedVersion": "5.8.1",
+              "cve": "CVE-2024-1234",
+              "cvssScore": 8.1,
+              "cvssRating": "High",
+              "patched": true,
+              "patchedVersions": [
+                "5.8.2"
+              ],
+              "remediation": "Update to version 5.8.2, or a newer patched version",
+              "reference": "https://www.wordfence.com/threat-intel/vulnerabilities/id/848ccbdc-c6f1-480f-a272-cd459e706713?source=api-prod",
+              "published": "2024-01-09 00:00:00"
+            }
+          ]
+        }
+      },
+      {
+        "id": "klant-b",
+        "name": "Klant B Webshop",
+        "url": "https://klant-b.nl",
+        "tags": [
+          "klant",
+          "woocommerce"
+        ],
+        "hasPassword": true,
+        "multisite": false,
+        "state": "warning",
+        "issues": [
+          {
+            "severity": "warning",
+            "code": "vulnerability",
+            "message": "Astra 4.6.0: Astra 4.0.0 - 4.6.0 - Missing Authorization (CVSS 4.3, Medium)"
+          },
+          {
+            "severity": "warning",
+            "code": "updates",
+            "message": "1 thema-update beschikbaar"
+          },
+          {
+            "severity": "warning",
+            "code": "health-critical",
+            "message": "Site Health: 1 kritiek probleem"
+          }
+        ],
+        "status": {
+          "collectedAt": "2026-10-16T09:00:00.000Z",
+          "reachable": true,
+          "isAdmin": true,
+          "bridge": "1.2.0",
+          "wpVersion": "6.8.3",
+          "phpVersion": "8.2.20",
+          "error": null,
+          "updates": {
+            "core": 0,
+            "plugins": 0,
+            "themes": 1
+          },
+          "updatesError": null,
+          "health": {
+            "critical": 1,
+            "recommended": 3,
+            "good": 16
+          },
+          "healthError": null
+        },
+        "updates": {
+          "checkedAt": "2026-10-16T09:00:00.000Z",
+          "core": [],
+          "plugins": [],
+          "themes": [
+            {
+              "slug": "astra",
+              "name": "Astra",
+              "currentVersion": "4.6.0",
+              "newVersion": "4.8.1"
+            }
+          ]
+        },
+        "vulnerabilities": {
+          "scannedAt": "2026-10-16T06:05:00.000Z",
+          "error": null,
+          "items": [
+            {
+              "id": "a1b2c3d4-0000-4000-8000-000000000002",
+              "title": "Astra 4.0.0 - 4.6.0 - Missing Authorization",
+              "softwareType": "theme",
+              "slug": "astra",
+              "softwareName": "Astra",
+              "installedVersion": "4.6.0",
+              "cve": null,
+              "cvssScore": 4.3,
+              "cvssRating": "Medium",
+              "patched": true,
+              "patchedVersions": [
+                "4.6.1"
+              ],
+              "remediation": null,
+              "reference": null,
+              "published": "2024-03-01 12:00:00"
+            }
+          ]
+        }
+      },
+      {
+        "id": "klant-c",
+        "name": "JTIT",
+        "url": "https://klant-c.nl",
+        "tags": [
+          "intern"
+        ],
+        "hasPassword": true,
+        "multisite": false,
+        "state": "ok",
+        "issues": [],
+        "status": {
+          "collectedAt": "2026-10-16T09:00:00.000Z",
+          "reachable": true,
+          "isAdmin": true,
+          "bridge": "1.2.0",
+          "wpVersion": "6.8.3",
+          "phpVersion": "8.3.12",
+          "error": null,
+          "updates": {
+            "core": 0,
+            "plugins": 0,
+            "themes": 0
+          },
+          "updatesError": null,
+          "health": {
+            "critical": 0,
+            "recommended": 0,
+            "good": 20
+          },
+          "healthError": null
+        },
+        "updates": {
+          "checkedAt": "2026-10-16T09:00:00.000Z",
+          "core": [],
+          "plugins": [],
+          "themes": []
+        },
+        "vulnerabilities": {
+          "scannedAt": "2026-10-16T06:05:00.000Z",
+          "error": null,
+          "items": []
+        }
+      }
+    ]
+  }
+}

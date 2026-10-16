@@ -2,11 +2,14 @@ import express, { type NextFunction, type Request, type Response } from 'express
 import { SessionManager } from './auth/session.js';
 import type { DashboardDeps, RouteContext } from './context.js';
 import { apiRoutes } from './routes/api-routes.js';
+import { clientApiRoutes } from './routes/client-api-routes.js';
 import { authRoutes } from './routes/auth-routes.js';
 import { siteRoutes } from './routes/site-routes.js';
 import { updateRoutes } from './routes/update-routes.js';
 import { userRoutes } from './routes/user-routes.js';
 import { networkRoutes } from './routes/network-routes.js';
+import { vulnerabilityRoutes } from './routes/vulnerability-routes.js';
+import { WordfenceFeed } from '../vuln/wordfence.js';
 import { summarizeSite } from './snapshots.js';
 import { APP_CSS, APP_JS, FAVICON_SVG } from './views/assets.js';
 import type { NavData } from './views/layout.js';
@@ -70,6 +73,7 @@ function navData(ctx: RouteContext) {
           name: site.name,
           state: !site.hasPassword || status.reachable === false ? ('error' as const) : status.reachable ? ('ok' as const) : ('unknown' as const),
           updates: u ? u.core + u.plugins + u.themes : 0,
+          vulnerabilities: status.vulnerabilities?.total ?? 0,
           multisite: status.multisite === true,
         };
       });
@@ -84,7 +88,11 @@ function navData(ctx: RouteContext) {
 export function createDashboardApp(deps: DashboardDeps): express.Express {
   const app = express();
   const secure = deps.env.DASHBOARD_SECURE_COOKIES;
-  const ctx: RouteContext = { ...deps, sessions: new SessionManager(deps.db, secure) };
+  const ctx: RouteContext = {
+    ...deps,
+    sessions: new SessionManager(deps.db, secure),
+    vulnFeed: deps.vulnFeed ?? new WordfenceFeed(),
+  };
 
   app.disable('x-powered-by');
   // Exactly one proxy hop (Traefik) in front; req.ip is then the real client IP.
@@ -104,6 +112,8 @@ export function createDashboardApp(deps: DashboardDeps): express.Express {
   app.get('/assets/logo.svg', asset('svg', FAVICON_SVG));
 
   app.use('/api', apiRoutes(ctx));
+  // Bearer-only JSON for the macOS client: no session, no CSRF, so before sameOrigin/session.
+  app.use('/client-api/v1', clientApiRoutes(ctx));
 
   app.use(sameOrigin);
   app.use(express.urlencoded({ extended: false, limit: '64kb', parameterLimit: 500 }));
@@ -113,6 +123,7 @@ export function createDashboardApp(deps: DashboardDeps): express.Express {
   app.use(updateRoutes(ctx));
   app.use(userRoutes(ctx));
   app.use(networkRoutes(ctx));
+  app.use(vulnerabilityRoutes(ctx));
   app.use(siteRoutes(ctx));
 
   app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {

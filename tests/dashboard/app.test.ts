@@ -76,6 +76,9 @@ describe('dashboard app', () => {
       DASHBOARD_SECURE_COOKIES: false,
       WP_TIMEOUT_MS: 5000,
       WP_UPDATE_TIMEOUT_MS: 5000,
+      WORDFENCE_FEED: 'production',
+      VULN_FEED_REFRESH_HOURS: 12,
+      VULN_SCAN_INTERVAL_HOURS: 6,
     };
     await seedAdmin(ADMIN, db);
     const app = createDashboardApp({ db, store, env, totpKey: deriveTotpKey(key), fetch: wpFetch });

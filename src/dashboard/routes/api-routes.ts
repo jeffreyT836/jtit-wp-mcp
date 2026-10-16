@@ -1,23 +1,9 @@
-import { timingSafeEqual } from 'node:crypto';
-import express, { Router, type NextFunction, type Request, type Response } from 'express';
+import express, { Router } from 'express';
+import { bearer } from '../auth/bearer.js';
 import type { RouteContext } from '../context.js';
 import { ingestBodySchema, storeIngest } from '../snapshots.js';
 
 const INGEST_BODY_LIMIT = '1mb';
-
-function bearer(token: string) {
-  const expected = Buffer.from(token);
-  return (req: Request, res: Response, next: NextFunction): void => {
-    const match = /^Bearer\s+(.+)$/i.exec(req.header('authorization') ?? '');
-    const provided = Buffer.from(match?.[1] ?? '');
-    const ok = provided.length === expected.length && timingSafeEqual(provided, expected);
-    if (!ok) {
-      res.status(401).json({ success: false, error: 'unauthorized' });
-      return;
-    }
-    next();
-  };
-}
 
 /**
  * Machine API for n8n. Not routed publicly by Traefik (see docker-compose.prod.yml); n8n

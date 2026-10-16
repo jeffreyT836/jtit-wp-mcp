@@ -8,6 +8,7 @@ import { DashboardDb } from '../../src/dashboard/db.js';
 import { seedAdmin } from '../../src/dashboard/seed-admin.js';
 import { SiteStore } from '../../src/store/site-store.js';
 import type { FetchLike } from '../../src/wp/client.js';
+import type { WordfenceFeed } from '../../src/vuln/wordfence.js';
 
 export const ADMIN = { ADMIN_EMAIL: 'admin@jtit.nl', ADMIN_PASSWORD: 'a very long admin password' };
 
@@ -55,7 +56,10 @@ export interface TestApp {
   close: () => Promise<void>;
 }
 
-export async function startApp(wpFetch: FetchLike): Promise<TestApp> {
+export async function startApp(
+  wpFetch: FetchLike,
+  opts: { env?: Partial<DashboardEnv>; vulnFeed?: WordfenceFeed } = {},
+): Promise<TestApp> {
   const key = randomBytes(32);
   const db = new DashboardDb(':memory:');
   const store = new SiteStore(':memory:', key);
@@ -67,9 +71,13 @@ export async function startApp(wpFetch: FetchLike): Promise<TestApp> {
     DASHBOARD_SECURE_COOKIES: false,
     WP_TIMEOUT_MS: 5000,
     WP_UPDATE_TIMEOUT_MS: 5000,
+    WORDFENCE_FEED: 'production',
+    VULN_FEED_REFRESH_HOURS: 12,
+    VULN_SCAN_INTERVAL_HOURS: 6,
+    ...opts.env,
   };
   await seedAdmin(ADMIN, db);
-  const app = createDashboardApp({ db, store, env, totpKey: deriveTotpKey(key), fetch: wpFetch });
+  const app = createDashboardApp({ db, store, env, totpKey: deriveTotpKey(key), fetch: wpFetch, vulnFeed: opts.vulnFeed });
   const server: Server = await new Promise((resolve) => {
     const s = app.listen(0, '127.0.0.1', () => resolve(s));
   });

@@ -87,6 +87,8 @@ h2 { font-size: 1.05rem; margin: 0 0 .75rem; }
 .nav-site { font-size: .92rem; padding: .45rem .75rem; }
 .nav-site-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .nav-count { font-size: .72rem; font-weight: 700; padding: .05rem .45rem; border-radius: 999px; background: rgba(255,181,71,.16); color: #FFB547; }
+.nav-count.vuln { background: var(--pink-soft); color: var(--pink-text); margin-right: .25rem; }
+.vuln-attribution { margin-top: .75rem; }
 .nav-sub { display: grid; margin: .1rem 0 .4rem 1.55rem; padding-left: .75rem; border-left: 1px solid #34342F; }
 .nav-sub a { padding: .3rem .5rem; font-size: .86rem; color: #9C9C94; text-decoration: none; border-radius: 6px; }
 .nav-sub a:hover, .nav-sub a.active { color: var(--cyan); }

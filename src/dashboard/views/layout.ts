@@ -8,6 +8,8 @@ export interface NavSite {
   name: string;
   state: DotState;
   updates: number;
+  /** Known vulnerabilities from the newest scan. */
+  vulnerabilities?: number;
   multisite?: boolean;
 }
 
@@ -38,12 +40,14 @@ function siteLinks(nav: NavData): SafeHtml {
     const active = nav.path === base || nav.path.startsWith(`${base}/`);
     return html`<a class="nav-site${active ? ' active' : ''}" href="${base}" ${active ? html`aria-current="page"` : null}>
         ${statusDot(site.state)}<span class="nav-site-name">${site.name}</span>
+        ${site.vulnerabilities ? html`<span class="nav-count vuln" title="kwetsbaarheden">${String(site.vulnerabilities)}</span>` : null}
         ${site.updates > 0 ? html`<span class="nav-count" title="openstaande updates">${String(site.updates)}</span>` : null}
       </a>
       ${active
         ? html`<div class="nav-sub">
             <a href="${base}#updates">Updates</a>
             <a href="${base}#health">Site Health</a>
+            <a href="${base}#vulnerabilities">Kwetsbaarheden</a>
             ${site.multisite ? html`<a href="${base}/network" class="${nav.path.startsWith(`${base}/network`) ? 'active' : ''}">Multisite</a>` : null}
             <a href="${base}/users" class="${nav.path === `${base}/users` ? 'active' : ''}">Gebruikers</a>
             <a href="${base}/edit" class="${nav.path === `${base}/edit` ? 'active' : ''}">Bewerken</a>

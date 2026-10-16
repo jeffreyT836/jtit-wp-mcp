@@ -11,6 +11,8 @@ import { latestUpdates, plainText } from '../updates.js';
 import { updatesSection } from '../views/update-views.js';
 import { latestHealth } from '../health.js';
 import { healthSection } from '../views/health-views.js';
+import { latestVulnerabilities } from '../../vuln/items.js';
+import { vulnerabilitySection } from '../views/vulnerability-views.js';
 import type { StoredSite } from '../../store/site-store.js';
 import {
   auditPage,
@@ -78,6 +80,7 @@ export function renderSiteDetail(
       snapshots,
       updates: updatesSection({ csrf, site, snapshot: latestUpdates(snapshots) }),
       health: healthSection({ csrf, site, snapshot: latestHealth(snapshots) }),
+      vulnerabilities: vulnerabilitySection({ csrf, site, snapshot: latestVulnerabilities(snapshots), feed: ctx.vulnFeed.status() }),
       audit: ctx.db.recentAudit(500).filter((a) => a.target === site.id).slice(0, 20),
     }),
   }, status);
@@ -190,7 +193,9 @@ export function siteRoutes(ctx: RouteContext): Router {
         ? { kind: 'ok' as const, message: 'Updates opnieuw gecontroleerd.' }
         : req.query.health
           ? { kind: 'ok' as const, message: 'Site Health opnieuw gecontroleerd.' }
-          : undefined;
+          : req.query.vulns
+            ? { kind: 'ok' as const, message: 'Kwetsbaarheden opnieuw gecontroleerd.' }
+            : undefined;
     renderSiteDetail(ctx, res, site, flash);
   });
 

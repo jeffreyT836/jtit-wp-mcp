@@ -83,6 +83,9 @@ export const envSchema = z.object({
 
 export type EnvConfig = z.output<typeof envSchema>;
 
+/** `KEY=` in an env file means "not set". */
+const emptyToUndefined = (v: unknown): unknown => (typeof v === 'string' && v.trim() === '' ? undefined : v);
+
 /** Environment for the dashboard process (`dist/dashboard/index.js`). */
 export const dashboardEnvSchema = z.object({
   SITES_DB: z.string().optional(),
@@ -98,6 +101,18 @@ export const dashboardEnvSchema = z.object({
     .transform((v) => v !== 'false'),
   WP_TIMEOUT_MS: z.coerce.number().int().positive().default(30000),
   WP_UPDATE_TIMEOUT_MS: z.coerce.number().int().positive().default(300000),
+  /** Read-only bearer token for the client API (`/client-api/v1`); the API answers 503 without it. */
+  DASHBOARD_CLIENT_TOKEN: z.preprocess(
+    emptyToUndefined,
+    z.string().min(32, 'DASHBOARD_CLIENT_TOKEN must be at least 32 chars').optional(),
+  ),
+  /** Wordfence Intelligence API key; vulnerability scanning is disabled without it. */
+  WORDFENCE_API_KEY: z.preprocess(emptyToUndefined, z.string().optional()),
+  WORDFENCE_FEED: z.enum(['production', 'scanner']).default('production'),
+  VULN_FEED_REFRESH_HOURS: z.coerce.number().positive().default(12),
+  VULN_SCAN_INTERVAL_HOURS: z.coerce.number().positive().default(6),
+  /** Compact feed index; defaults to `wordfence-index.json` next to DASHBOARD_DB. */
+  VULN_CACHE_FILE: z.preprocess(emptyToUndefined, z.string().optional()),
 });
 
 export type DashboardEnv = z.output<typeof dashboardEnvSchema>;

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { siteIdSchema } from '../config/schema.js';
+import { isCriticalVuln, VULN_KIND, type VulnItem } from '../vuln/items.js';
 import type { DashboardDb, SnapshotRow } from './db.js';
 
 export const SNAPSHOT_RETENTION_DAYS = 30;
@@ -56,6 +57,9 @@ export interface SiteStatus {
   multisite?: boolean;
   health?: { critical: number; recommended: number; good: number };
   healthError?: string;
+  /** From the newest `vulnerabilities` scan (non-informational matches). */
+  vulnerabilities?: { total: number; critical: number };
+  vulnerabilitiesError?: string;
 }
 
 type Json = Record<string, unknown>;
@@ -66,7 +70,7 @@ const len = (v: unknown): number => (Array.isArray(v) ? v.length : 0);
 /** WordPress error messages can contain markup ("<strong>Fout:</strong>"). */
 const stripTags = (v: string): string => v.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
 
-/** Derives a display status from a site's latest `fleet_health` / `fleet_updates_report` snapshots. */
+/** Derives a display status from a site's latest `fleet_health` / `fleet_updates_report` / `fleet_site_health` / `vulnerabilities` snapshots. */
 export function summarizeSite(snapshots: SnapshotRow[]): SiteStatus {
   const status: SiteStatus = {};
   const newest = (a?: string, b?: string) => (!a ? b : !b ? a : a > b ? a : b);
@@ -110,6 +114,10 @@ export function summarizeSite(snapshots: SnapshotRow[]): SiteStatus {
       }
       const n = (v: unknown) => (typeof v === 'number' ? v : 0);
       status.health = { critical: n(summary.critical), recommended: n(summary.recommended), good: n(summary.good) };
+    } else if (snap.kind === VULN_KIND) {
+      const items = Array.isArray(data?.items) ? (data.items as VulnItem[]) : undefined;
+      if (items) status.vulnerabilities = { total: items.length, critical: items.filter(isCriticalVuln).length };
+      if (parsed.ok !== true) status.vulnerabilitiesError = stripTags(str(parsed.error) ?? 'onbekende fout');
     }
   }
   return status;
